@@ -1,0 +1,226 @@
+import uuid
+import platform
+import hashlib
+import json
+from pathlib import Path
+from typing import Dict, Optional
+from datetime import datetime
+
+class DeviceManager:
+    """Gestor de dispositivos autorizados"""
+    
+    def __init__(self):
+        self.device_id = self._generate_device_id()
+        self.device_name = self._get_device_name()
+        self.device_info = self._get_device_info()
+    
+    def _generate_device_id(self) -> str:
+        """Genera un ID único para este dispositivo"""
+        try:
+            # Obtener MAC address
+            mac = ':'.join(['{:02x}'.format((uuid.getnode() >> elements) & 0xff)
+                          for elements in range(0,8*6,8)][::-1])
+            
+            # Información del sistema
+            hostname = platform.node()
+            system = platform.system()
+            machine = platform.machine()
+            
+            # Crear hash único
+            device_string = f"{mac}-{hostname}-{system}-{machine}"
+            device_hash = hashlib.sha256(device_string.encode()).hexdigest()
+            
+            return device_hash
+        except Exception as e:
+            print(f"Error generando device_id: {e}")
+            return hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()
+    
+    def _get_device_name(self) -> str:
+        """Obtiene nombre descriptivo del dispositivo"""
+        hostname = platform.node()
+        system = platform.system()
+        return f"{hostname} - {system}"
+    
+    def _get_device_info(self) -> dict:
+        """Obtiene información detallada del dispositivo"""
+        return {
+            'hostname': platform.node(),
+            'system': platform.system(),
+            'release': platform.release(),
+            'version': platform.version(),
+            'machine': platform.machine(),
+            'processor': platform.processor(),
+            'python_version': platform.python_version()
+        }
+    
+    def get_device_id(self) -> str:
+        """Retorna el ID del dispositivo"""
+        return self.device_id
+    
+    def verify_device_authorization(self) -> dict:
+        """
+        Verifica si el dispositivo está autorizado
+        
+        Returns:
+            dict: {'authorized': bool, 'needs_registration': bool, 'message': str}
+        """
+        try:
+            from src.database.db_manager import db_manager
+            
+            if not db_manager.is_authenticated():
+                return {
+                    'authorized': False,
+                    'needs_registration': False,
+                    'message': 'Base de datos no conectada'
+                }
+            
+            conn = db_manager.get_authenticated_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # Verificar si el dispositivo existe
+            cursor.execute("""
+                SELECT autorizado, activo, device_name, ultimo_acceso
+                FROM dispositivos_autorizados
+                WHERE device_id = %s
+            """, (self.device_id,))
+            
+            device = cursor.fetchone()
+            
+            if not device:
+                # Dispositivo no registrado
+                return {
+                    'authorized': False,
+                    'needs_registration': True,
+                    'message': 'Dispositivo no registrado. Se requiere autorización del administrador.'
+                }
+            
+            if not device['activo']:
+                # Dispositivo desactivado
+                return {
+                    'authorized': False,
+                    'needs_registration': False,
+                    'message': 'Este dispositivo ha sido desactivado. Contacte al administrador.'
+                }
+            
+            if not device['autorizado']:
+                # Dispositivo pendiente de autorización
+                return {
+                    'authorized': False,
+                    'needs_registration': False,
+                    'message': 'Dispositivo pendiente de autorización. Contacte al administrador.'
+                }
+            
+            # Dispositivo autorizado - actualizar último acceso
+            cursor.execute("""
+                UPDATE dispositivos_autorizados
+                SET ultimo_acceso = NOW()
+                WHERE device_id = %s
+            """, (self.device_id,))
+            conn.commit()
+            
+            device_name = device['device_name']
+            
+            return {
+                'authorized': True,
+                'needs_registration': False,
+                'message': f'Dispositivo autorizado: {device_name}'
+            }
+            
+        except Exception as e:
+            return {
+                'authorized': False,
+                'needs_registration': False,
+                'message': f'Error verificando autorización: {str(e)}'
+            }
+    
+    def register_device(self, username: str) -> dict:
+        """
+        Registra un nuevo dispositivo
+        
+        Args:
+            username: Usuario que solicita el registro
+            
+        Returns:
+            dict: {'success': bool, 'message': str}
+        """
+        try:
+            from src.database.db_manager import db_manager
+            
+            conn = db_manager.get_authenticated_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # Verificar si ya existe
+            cursor.execute("""
+                SELECT id_dispositivo FROM dispositivos_autorizados
+                WHERE device_id = %s
+            """, (self.device_id,))
+            
+            if cursor.fetchone():
+                return {
+                    'success': False,
+                    'message': 'Este dispositivo ya está registrado.'
+                }
+            
+            # Obtener ID del usuario
+            cursor.execute("""
+                SELECT id_usuario FROM usuarios_sistema
+                WHERE username = %s
+            """, (username,))
+            
+            user = cursor.fetchone()
+            user_id = user['id_usuario'] if user else None
+            
+            # Registrar dispositivo
+            cursor.execute("""
+                INSERT INTO dispositivos_autorizados
+                (device_id, device_name, device_info, id_usuario, autorizado)
+                VALUES (%s, %s, %s, %s, FALSE)
+            """, (self.device_id, self.device_name, json.dumps(self.device_info), user_id))
+            
+            conn.commit()
+            
+            return {
+                'success': True,
+                'message': 'Dispositivo registrado. Espere autorización del administrador.'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error registrando dispositivo: {str(e)}'
+            }
+    
+    def log_access(self, username: str, modulo: str, accion: str, 
+                   exito: bool = True, detalle: str = None):
+        """
+        Registra un acceso/acción del dispositivo
+        
+        Args:
+            username: Usuario que realizó la acción
+            modulo: Módulo de la aplicación
+            accion: Acción realizada
+            exito: Si la acción fue exitosa
+            detalle: Información adicional
+        """
+        try:
+            from src.database.db_manager import db_manager
+            
+            if not db_manager.is_authenticated():
+                return
+            
+            conn = db_manager.get_authenticated_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO log_accesos_dispositivos
+                (device_id, username, modulo, accion, exito, detalle)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (self.device_id, username, modulo, accion, exito, detalle))
+            
+            conn.commit()
+            
+        except Exception as e:
+            print(f"Error logging access: {e}")
+
+# Instancia global
+device_manager = DeviceManager()

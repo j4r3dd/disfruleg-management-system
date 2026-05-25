@@ -1,0 +1,691 @@
+import { useState } from 'react';
+import { 
+  ArrowLeft,
+  Search,
+  UserPlus,
+  Edit2,
+  Unlock,
+  Trash2,
+  X,
+  Users,
+  UserCog,
+  ShieldAlert,
+  Activity,
+  ToggleLeft,
+  ToggleRight,
+  Mail,
+  Calendar,
+  Clock,
+  Shield,
+  Camera,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle
+} from 'lucide-react';
+import logoImage from 'figma:asset/a5261bbcf16f686502fe4e61743bed0fd04af381.png';
+
+interface User {
+  id: number;
+  username: string;
+  fullName: string;
+  role: 'ADMIN' | 'USUARIO' | 'SUPERVISOR';
+  status: 'Activo' | 'Inactivo' | 'Bloqueado';
+  lastAccess: string;
+  failedAttempts: number;
+  email?: string;
+  createdAt?: string;
+  avatarColor?: string;
+  avatarImage?: string;
+}
+
+// Colores predefinidos para avatares
+const avatarColors = [
+  '#4ade80', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b',
+  '#14b8a6', '#ef4444', '#6366f1', '#a855f7', '#06b6d4'
+];
+
+// Datos de ejemplo
+const mockUsers: User[] = [
+  { id: 3, username: 'ANTONIO', fullName: 'Juan Antonio Mercado Lara', role: 'ADMIN', status: 'Activo', lastAccess: '2025-10-02 08:57', failedAttempts: 0, email: 'antonio@disfruleg.com', createdAt: '2024-01-15', avatarColor: '#4ade80' },
+  { id: 1, username: 'jared', fullName: 'Jared (Administrador)', role: 'ADMIN', status: 'Activo', lastAccess: '2025-10-03 04:46', failedAttempts: 0, email: 'jared@disfruleg.com', createdAt: '2024-01-10', avatarColor: '#3b82f6' },
+  { id: 4, username: 'test', fullName: 'test', role: 'ADMIN', status: 'Activo', lastAccess: '2025-10-03 04:50', failedAttempts: 0, email: 'test@disfruleg.com', createdAt: '2024-02-01', avatarColor: '#8b5cf6' },
+  { id: 5, username: 'usuario', fullName: 'usuario', role: 'USUARIO', status: 'Activo', lastAccess: '2025-10-02 08:52', failedAttempts: 0, email: 'usuario@disfruleg.com', createdAt: '2024-03-10', avatarColor: '#ec4899' },
+  { id: 2, username: 'valeria', fullName: 'Valeria (Administrador)', role: 'ADMIN', status: 'Activo', lastAccess: 'Nunca', failedAttempts: 0, email: 'valeria@disfruleg.com', createdAt: '2024-01-12', avatarColor: '#f59e0b' },
+  { id: 6, username: 'carlos', fullName: 'Carlos Supervisor', role: 'SUPERVISOR', status: 'Activo', lastAccess: '2025-10-01 14:30', failedAttempts: 0, email: 'carlos@disfruleg.com', createdAt: '2024-04-15', avatarColor: '#14b8a6' },
+  { id: 7, username: 'maria', fullName: 'María López', role: 'USUARIO', status: 'Inactivo', lastAccess: '2025-09-15 10:20', failedAttempts: 0, email: 'maria@disfruleg.com', createdAt: '2024-05-20', avatarColor: '#ef4444' },
+  { id: 8, username: 'pedro', fullName: 'Pedro García', role: 'USUARIO', status: 'Bloqueado', lastAccess: '2025-09-28 16:45', failedAttempts: 5, email: 'pedro@disfruleg.com', createdAt: '2024-06-01', avatarColor: '#6366f1' },
+];
+
+interface UserManagementProps {
+  isDark: boolean;
+  onBack: () => void;
+  currentUsername?: string;
+}
+
+export default function UserManagement({ isDark, onBack, currentUsername = 'test' }: UserManagementProps) {
+  const [users, setUsers] = useState<User[]>(mockUsers);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRole, setSelectedRole] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+
+  // Calcular estadísticas
+  const totalUsers = users.length;
+  const activeUsers = users.filter(u => u.status === 'Activo').length;
+  const blockedUsers = users.filter(u => u.status === 'Bloqueado').length;
+  const adminUsers = users.filter(u => u.role === 'ADMIN').length;
+
+  // Filtrar usuarios
+  let filteredUsers = users.filter(user => {
+    const matchesSearch = user.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         user.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         user.email?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesRole = selectedRole === 'all' || user.role === selectedRole;
+    const matchesStatus = selectedStatus === 'all' || user.status === selectedStatus;
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
+  // Obtener valores únicos
+  const roles = ['all', 'ADMIN', 'SUPERVISOR', 'USUARIO'];
+  const statuses = ['all', 'Activo', 'Inactivo', 'Bloqueado'];
+
+  const getStatusColor = (status: string) => {
+    if (status === 'Activo') return 'text-[#4ade80]';
+    if (status === 'Bloqueado') return 'text-red-500';
+    return 'text-gray-500';
+  };
+
+  const getStatusIcon = (status: string) => {
+    if (status === 'Activo') return CheckCircle2;
+    if (status === 'Bloqueado') return XCircle;
+    return AlertTriangle;
+  };
+
+  const getRoleColor = (role: string) => {
+    if (role === 'ADMIN') return 'bg-purple-500';
+    if (role === 'SUPERVISOR') return 'bg-blue-500';
+    return 'bg-orange-500';
+  };
+
+  const handleCreateUser = () => {
+    setSelectedUser(null);
+    setIsCreating(true);
+    setShowUserModal(true);
+  };
+
+  const handleToggleStatus = (userId: number) => {
+    setUsers(users.map(user => {
+      if (user.id === userId) {
+        const newStatus = user.status === 'Activo' ? 'Inactivo' : 'Activo';
+        return { ...user, status: newStatus };
+      }
+      return user;
+    }));
+  };
+
+  const handleResetFailedAttempts = (userId: number) => {
+    setUsers(users.map(user => {
+      if (user.id === userId) {
+        return { ...user, failedAttempts: 0, status: 'Activo' };
+      }
+      return user;
+    }));
+  };
+
+  const handleDeleteUser = (userId: number) => {
+    if (confirm('¿Estás seguro de que deseas eliminar este usuario?')) {
+      setUsers(users.filter(user => user.id !== userId));
+      setSelectedUser(null);
+    }
+  };
+
+  const handleChangeAvatarColor = (userId: number, color: string) => {
+    setUsers(users.map(user => {
+      if (user.id === userId) {
+        return { ...user, avatarColor: color, avatarImage: undefined };
+      }
+      return user;
+    }));
+    if (selectedUser?.id === userId) {
+      setSelectedUser({ ...selectedUser, avatarColor: color, avatarImage: undefined });
+    }
+  };
+
+  return (
+    <div className={`min-h-screen transition-colors duration-300 ${
+      isDark ? 'bg-[#1a1a1a]' : 'bg-[#e5e5e5]'
+    }`}>
+      
+      {/* Header */}
+      <header className={`border-b transition-colors duration-300 ${
+        isDark ? 'bg-[#2a2a2a] border-gray-700' : 'bg-[#d4d4d4] border-gray-400'
+      }`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={onBack}
+                className={`p-2 rounded-lg transition-colors ${
+                  isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-300'
+                }`}
+              >
+                <ArrowLeft size={20} className={isDark ? 'text-gray-300' : 'text-gray-700'} />
+              </button>
+              <img 
+                src={logoImage} 
+                alt="Logo" 
+                className="h-10 w-auto object-contain"
+              />
+              <div>
+                <h1 className="text-[#4ade80]">ADMINISTRADOR DE USUARIOS</h1>
+                <p className={`text-[11px] mt-[-4px] ${isDark ? 'text-gray-500' : 'text-gray-600'}`}>
+                  Usuario: {currentUsername} | Rol: ADMIN
+                </p>
+              </div>
+            </div>
+
+            {/* Botón Crear Usuario */}
+            <button
+              onClick={handleCreateUser}
+              className="px-4 py-2 bg-[#4ade80] hover:bg-[#3bc670] text-white rounded-lg transition-colors flex items-center gap-2"
+            >
+              <UserPlus size={16} />
+              Crear Usuario
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        
+        {/* Tarjetas de estadísticas */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className={`rounded-xl p-4 ${isDark ? 'bg-[#2a2a2a]' : 'bg-white'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className={`text-[13px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                Total Usuarios
+              </span>
+              <Users size={18} className="text-blue-500" />
+            </div>
+            <p className={`text-[24px] ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              {totalUsers}
+            </p>
+          </div>
+
+          <div className={`rounded-xl p-4 ${isDark ? 'bg-[#2a2a2a]' : 'bg-white'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className={`text-[13px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                Usuarios Activos
+              </span>
+              <Activity size={18} className="text-[#4ade80]" />
+            </div>
+            <p className={`text-[24px] text-[#4ade80]`}>
+              {activeUsers}
+            </p>
+          </div>
+
+          <div className={`rounded-xl p-4 ${isDark ? 'bg-[#2a2a2a]' : 'bg-white'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className={`text-[13px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                Bloqueados
+              </span>
+              <ShieldAlert size={18} className="text-red-500" />
+            </div>
+            <p className={`text-[24px] text-red-500`}>
+              {blockedUsers}
+            </p>
+          </div>
+
+          <div className={`rounded-xl p-4 ${isDark ? 'bg-[#2a2a2a]' : 'bg-white'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className={`text-[13px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                Administradores
+              </span>
+              <UserCog size={18} className="text-purple-500" />
+            </div>
+            <p className={`text-[24px] ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              {adminUsers}
+            </p>
+          </div>
+        </div>
+
+        {/* Controles de búsqueda y filtros */}
+        <div className={`rounded-xl p-4 mb-4 ${isDark ? 'bg-[#2a2a2a]' : 'bg-white'}`}>
+          <div className="flex flex-col md:flex-row gap-3">
+            {/* Búsqueda */}
+            <div className="relative flex-1">
+              <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${
+                isDark ? 'text-gray-500' : 'text-gray-600'
+              }`} size={16} />
+              <input
+                type="text"
+                placeholder="Buscar usuario..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={`w-full pl-9 pr-3 py-2 rounded-lg outline-none transition-all text-[14px] ${
+                  isDark 
+                    ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                    : 'bg-gray-100 text-gray-900 border border-gray-300'
+                }`}
+              />
+            </div>
+
+            {/* Filtro por rol */}
+            <div className="w-full md:w-48">
+              <select
+                value={selectedRole}
+                onChange={(e) => setSelectedRole(e.target.value)}
+                className={`w-full px-3 py-2 rounded-lg outline-none text-[14px] ${
+                  isDark 
+                    ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                    : 'bg-gray-100 text-gray-900 border border-gray-300'
+                }`}
+              >
+                {roles.map(role => (
+                  <option key={role} value={role}>
+                    {role === 'all' ? 'Todos los roles' : role}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro por estado */}
+            <div className="w-full md:w-48">
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className={`w-full px-3 py-2 rounded-lg outline-none text-[14px] ${
+                  isDark 
+                    ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                    : 'bg-gray-100 text-gray-900 border border-gray-300'
+                }`}
+              >
+                {statuses.map(status => (
+                  <option key={status} value={status}>
+                    {status === 'all' ? 'Todos los estados' : status}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Limpiar filtros */}
+            {(searchQuery || selectedRole !== 'all' || selectedStatus !== 'all') && (
+              <button
+                onClick={() => {
+                  setSelectedRole('all');
+                  setSelectedStatus('all');
+                  setSearchQuery('');
+                }}
+                className={`px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                  isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-100 text-red-600 hover:bg-red-200'
+                }`}
+              >
+                <X size={16} />
+                <span className="hidden sm:inline">Limpiar</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Grid de tarjetas de usuarios */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {filteredUsers.map((user) => {
+            const StatusIcon = getStatusIcon(user.status);
+            const isSelected = selectedUser?.id === user.id;
+            
+            return (
+              <div key={user.id} className="relative">
+                {/* Tarjeta del usuario */}
+                <button
+                  onClick={() => setSelectedUser(isSelected ? null : user)}
+                  className={`w-full rounded-2xl p-6 transition-all duration-200 text-left ${
+                    isSelected
+                      ? 'ring-2 ring-[#4ade80]'
+                      : ''
+                  } ${
+                    isDark 
+                      ? 'bg-[#2a2a2a] hover:bg-[#333333]' 
+                      : 'bg-white hover:bg-gray-50'
+                  }`}
+                >
+                  {/* Avatar */}
+                  <div className="flex justify-center mb-4">
+                    <div className="relative">
+                      {user.avatarImage ? (
+                        <img 
+                          src={user.avatarImage} 
+                          alt={user.username}
+                          className="w-24 h-24 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div 
+                          className="w-24 h-24 rounded-full flex items-center justify-center"
+                          style={{ backgroundColor: user.avatarColor || '#4ade80' }}
+                        >
+                          <span className="text-white text-[32px]">
+                            {user.username.charAt(0).toUpperCase()}
+                          </span>
+                        </div>
+                      )}
+                      {/* Badge de rol */}
+                      <div className={`absolute -bottom-1 -right-1 ${getRoleColor(user.role)} rounded-full p-2`}>
+                        {user.role === 'ADMIN' ? (
+                          <Shield size={14} className="text-white" />
+                        ) : user.role === 'SUPERVISOR' ? (
+                          <UserCog size={14} className="text-white" />
+                        ) : (
+                          <Users size={14} className="text-white" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Nombre y usuario */}
+                  <div className="text-center mb-3">
+                    <h3 className={`mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {user.fullName}
+                    </h3>
+                    <p className={`text-[13px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                      @{user.username}
+                    </p>
+                  </div>
+
+                  {/* Estado */}
+                  <div className="flex items-center justify-center gap-2 mb-3">
+                    <StatusIcon size={16} className={getStatusColor(user.status)} />
+                    <span className={`text-[13px] ${getStatusColor(user.status)}`}>
+                      {user.status}
+                    </span>
+                  </div>
+
+                  {/* Rol badge */}
+                  <div className="flex justify-center">
+                    <span className={`inline-block px-3 py-1 rounded-full text-white text-[12px] ${getRoleColor(user.role)}`}>
+                      {user.role}
+                    </span>
+                  </div>
+                </button>
+
+                {/* Panel expandido con detalles */}
+                {isSelected && (
+                  <div className={`mt-4 rounded-2xl p-6 transition-all duration-200 ${
+                    isDark ? 'bg-[#2a2a2a]' : 'bg-white'
+                  }`}>
+                    {/* Selector de color de avatar */}
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <label className={`text-[13px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Color de Avatar
+                        </label>
+                        <button
+                          className={`p-2 rounded-lg transition-colors ${
+                            isDark ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-200 text-gray-600'
+                          }`}
+                          title="Subir imagen"
+                        >
+                          <Camera size={16} />
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {avatarColors.map((color) => (
+                          <button
+                            key={color}
+                            onClick={() => handleChangeAvatarColor(user.id, color)}
+                            className={`w-8 h-8 rounded-full transition-all ${
+                              user.avatarColor === color ? 'ring-2 ring-offset-2 ring-[#4ade80]' : ''
+                            }`}
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Información detallada */}
+                    <div className="space-y-3 mb-6">
+                      <div className="flex items-start gap-3">
+                        <Mail size={16} className={isDark ? 'text-gray-400 mt-0.5' : 'text-gray-600 mt-0.5'} />
+                        <div className="flex-1">
+                          <p className={`text-[12px] ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Email</p>
+                          <p className={`text-[14px] ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            {user.email || 'No especificado'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <Calendar size={16} className={isDark ? 'text-gray-400 mt-0.5' : 'text-gray-600 mt-0.5'} />
+                        <div className="flex-1">
+                          <p className={`text-[12px] ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Fecha de Creación</p>
+                          <p className={`text-[14px] ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            {user.createdAt || 'No especificado'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <Clock size={16} className={isDark ? 'text-gray-400 mt-0.5' : 'text-gray-600 mt-0.5'} />
+                        <div className="flex-1">
+                          <p className={`text-[12px] ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Último Acceso</p>
+                          <p className={`text-[14px] ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            {user.lastAccess}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <ShieldAlert size={16} className={isDark ? 'text-gray-400 mt-0.5' : 'text-gray-600 mt-0.5'} />
+                        <div className="flex-1">
+                          <p className={`text-[12px] ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>Intentos Fallidos</p>
+                          <p className={`text-[14px] ${user.failedAttempts > 0 ? 'text-red-500' : isDark ? 'text-white' : 'text-gray-900'}`}>
+                            {user.failedAttempts}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <Users size={16} className={isDark ? 'text-gray-400 mt-0.5' : 'text-gray-600 mt-0.5'} />
+                        <div className="flex-1">
+                          <p className={`text-[12px] ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>ID de Usuario</p>
+                          <p className={`text-[14px] ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            #{user.id}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Acciones */}
+                    <div className="space-y-2">
+                      <button
+                        onClick={() => {
+                          setSelectedUser(user);
+                          setIsCreating(false);
+                          setShowUserModal(true);
+                        }}
+                        className={`w-full px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                          isDark ? 'bg-[#3a3a3a] text-gray-300 hover:bg-gray-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        <Edit2 size={16} />
+                        Editar Usuario
+                      </button>
+
+                      <button
+                        onClick={() => handleToggleStatus(user.id)}
+                        className={`w-full px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                          user.status === 'Activo'
+                            ? isDark ? 'bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50' : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+                            : isDark ? 'bg-green-900/30 text-green-400 hover:bg-green-900/50' : 'bg-green-100 text-green-700 hover:bg-green-200'
+                        }`}
+                      >
+                        {user.status === 'Activo' ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                        {user.status === 'Activo' ? 'Desactivar' : 'Activar'} Usuario
+                      </button>
+
+                      {user.failedAttempts > 0 && (
+                        <button
+                          onClick={() => handleResetFailedAttempts(user.id)}
+                          className={`w-full px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                            isDark ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                          }`}
+                        >
+                          <Unlock size={16} />
+                          Resetear Bloqueo
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => handleDeleteUser(user.id)}
+                        className={`w-full px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                          isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-100 text-red-700 hover:bg-red-200'
+                        }`}
+                      >
+                        <Trash2 size={16} />
+                        Eliminar Usuario
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Sin resultados */}
+        {filteredUsers.length === 0 && (
+          <div className="text-center py-12">
+            <Search className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-gray-400'}`} size={48} />
+            <p className={isDark ? 'text-gray-500' : 'text-gray-600'}>
+              No se encontraron usuarios con los filtros aplicados
+            </p>
+          </div>
+        )}
+      </main>
+
+      {/* Modal para crear/editar usuario */}
+      {showUserModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className={`w-full max-w-md rounded-xl p-6 ${isDark ? 'bg-[#2a2a2a]' : 'bg-white'}`}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={isDark ? 'text-white' : 'text-gray-900'}>
+                {isCreating ? 'Crear Nuevo Usuario' : 'Editar Usuario'}
+              </h3>
+              <button
+                onClick={() => setShowUserModal(false)}
+                className={`p-1 rounded-lg transition-colors ${
+                  isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-200'
+                }`}
+              >
+                <X size={20} className={isDark ? 'text-gray-400' : 'text-gray-600'} />
+              </button>
+            </div>
+
+            <form className="space-y-4">
+              <div>
+                <label className={`block text-[13px] mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Usuario
+                </label>
+                <input
+                  type="text"
+                  defaultValue={selectedUser?.username || ''}
+                  className={`w-full px-3 py-2 rounded-lg outline-none ${
+                    isDark 
+                      ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                      : 'bg-gray-100 text-gray-900 border border-gray-300'
+                  }`}
+                  placeholder="Nombre de usuario"
+                />
+              </div>
+
+              <div>
+                <label className={`block text-[13px] mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Nombre Completo
+                </label>
+                <input
+                  type="text"
+                  defaultValue={selectedUser?.fullName || ''}
+                  className={`w-full px-3 py-2 rounded-lg outline-none ${
+                    isDark 
+                      ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                      : 'bg-gray-100 text-gray-900 border border-gray-300'
+                  }`}
+                  placeholder="Nombre completo"
+                />
+              </div>
+
+              <div>
+                <label className={`block text-[13px] mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Email
+                </label>
+                <input
+                  type="email"
+                  defaultValue={selectedUser?.email || ''}
+                  className={`w-full px-3 py-2 rounded-lg outline-none ${
+                    isDark 
+                      ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                      : 'bg-gray-100 text-gray-900 border border-gray-300'
+                  }`}
+                  placeholder="correo@ejemplo.com"
+                />
+              </div>
+
+              <div>
+                <label className={`block text-[13px] mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Rol
+                </label>
+                <select
+                  defaultValue={selectedUser?.role || 'USUARIO'}
+                  className={`w-full px-3 py-2 rounded-lg outline-none ${
+                    isDark 
+                      ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                      : 'bg-gray-100 text-gray-900 border border-gray-300'
+                  }`}
+                >
+                  <option value="ADMIN">ADMIN</option>
+                  <option value="SUPERVISOR">SUPERVISOR</option>
+                  <option value="USUARIO">USUARIO</option>
+                </select>
+              </div>
+
+              {isCreating && (
+                <div>
+                  <label className={`block text-[13px] mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Contraseña
+                  </label>
+                  <input
+                    type="password"
+                    className={`w-full px-3 py-2 rounded-lg outline-none ${
+                      isDark 
+                        ? 'bg-[#3a3a3a] text-white border border-gray-600' 
+                        : 'bg-gray-100 text-gray-900 border border-gray-300'
+                    }`}
+                    placeholder="Contraseña"
+                  />
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowUserModal(false)}
+                  className={`flex-1 px-4 py-2 rounded-lg transition-colors ${
+                    isDark ? 'bg-[#3a3a3a] text-gray-300 hover:bg-gray-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-[#4ade80] hover:bg-[#3bc670] text-white rounded-lg transition-colors"
+                >
+                  {isCreating ? 'Crear' : 'Guardar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

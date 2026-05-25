@@ -1,0 +1,84 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== Build / packaging =====
+build/
+dist/
+*.egg-info/
+*.spec.bak
+installer/Output/
+
+# ===== Editors / OS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+__MACOSX/
+
+# ===== Secrets / credentials (NEVER COMMIT) =====
+.env
+.env.local
+.env.*.local
+credentials.json
+*.pem
+*.key
+.disfruleg_remember
+
+# ===== Logs =====
+*.log
+logs/
+receipts_*.log
+receipts_errors_*.log
+
+# ===== Databases / dumps =====
+*.db
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.dump
+
+# ===== Generated reports & user output =====
+output/
+src/output/
+reportes/
+reportes_importacion/
+*.pdf
+*.xlsx
+
+# ===== Temporary files =====
+*.tmp
+*.temp
+*.bak
+*.md.bak
+
+# ===== Project-specific backups =====
+backups/
+backup_*/
+
+# ===== Claude / dev tooling =====
+.claude/
+.npmrc
+
+# ===== Test artifacts =====
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+TEST_DIS/

@@ -1,0 +1,1955 @@
+# -*- coding: utf-8 -*-
+"""
+DISFRULEG - Purchase Registration (Modernized with Fiscal & Financial Data)
+Módulo de registro de compras con información fiscal completa
+Versión 2.0 - Octubre 2025
+"""
+
+import os
+import customtkinter as ctk
+from tkinter import messagebox
+import mysql.connector
+from src.database.conexion import conectar
+from decimal import Decimal
+from datetime import datetime
+from src.auth.auth_manager import AuthManager
+from src.theme import COLORS, FONTS
+import re
+
+# Import calendar picker
+try:
+    from tkcalendar import DateEntry
+    CALENDAR_AVAILABLE = True
+except ImportError:
+    CALENDAR_AVAILABLE = False
+    print("Warning: tkcalendar not available. Using text entry for dates.")
+
+class ComprasApp:
+    def __init__(self, root, user_data):
+        self.root = root
+        self.root.title("Registro de Compras (Fiscal) - Disfruleg")
+        self.root.geometry("1600x900")
+
+        # Datos del usuario autenticado
+        self.user_data = user_data
+        self.es_admin = (self.user_data['rol'] == 'admin')
+        self.auth_manager = AuthManager()
+        
+        # Connect to database
+        self.conn = conectar()
+        self.cursor = self.conn.cursor()
+        
+        # Variables del formulario
+        self.selected_product = ctk.StringVar()
+        self.cantidad_var = ctk.StringVar()
+        self.precio_var = ctk.StringVar()
+        self.fecha_compra_var = ctk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))  # Fecha de la factura/compra
+        self.fecha_registro_var = ctk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))  # Fecha de registro en sistema
+        
+        # NUEVAS VARIABLES FISCALES
+        self.folio_var = ctk.StringVar()
+        self.proveedor_var = ctk.StringVar()
+        self.rfc_var = ctk.StringVar()
+        self.incluir_iva_var = ctk.BooleanVar(value=True)  # Checkbox para IVA (por defecto SÍ)
+        self.ieps_var = ctk.StringVar(value="0.00")
+        self.tasa_interes_var = ctk.StringVar(value="0.00")
+        self.metodo_pago_var = ctk.StringVar(value="PUE")
+        self.forma_pago_var = ctk.StringVar(value="03")
+        self.notas_var = ctk.StringVar()
+        
+        self.filtro_var = ctk.StringVar()
+        self.all_compras = []
+        
+        self.load_productos()
+        self.load_catalogos()
+        self.create_interface()
+        self.load_compras()
+        
+        # ✅ Protocol for window closing
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+    def load_productos(self):
+        """Cargar productos desde la base de datos"""
+        self.cursor.execute("SELECT id_producto, nombre_producto, unidad_producto, es_especial FROM producto ORDER BY nombre_producto")
+        self.productos = self.cursor.fetchall()
+        
+    def crear_producto_nuevo(self):
+        """Ventana emergente para crear un producto nuevo sobre la marcha"""
+        
+        # Crear ventana emergente
+        ventana_producto = ctk.CTkToplevel(self.root)
+        ventana_producto.title("Crear Producto Nuevo")
+        ventana_producto.geometry("500x450")
+        ventana_producto.transient(self.root)
+        ventana_producto.grab_set()
+        
+        # Centrar ventana
+        ventana_producto.update_idletasks()
+        x = (ventana_producto.winfo_screenwidth() // 2) - (500 // 2)
+        y = (ventana_producto.winfo_screenheight() // 2) - (450 // 2)
+        ventana_producto.geometry(f"500x450+{x}+{y}")
+        
+        # Frame principal
+        main_frame = ctk.CTkFrame(ventana_producto, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=30, pady=30)
+        
+        # Título
+        ctk.CTkLabel(
+            main_frame,
+            text="Crear Producto Nuevo",
+            font=("Arial", 20, "bold"),
+            text_color=COLORS['primary']
+        ).pack(pady=(0, 20))
+        
+        # Variables
+        nombre_var = ctk.StringVar()
+        unidad_var = ctk.StringVar(value="PIEZA")
+        
+        # Nombre del producto
+        ctk.CTkLabel(
+            main_frame,
+            text="Nombre del Producto: *",
+            font=("Arial", 12, "bold"),
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        nombre_entry = ctk.CTkEntry(
+            main_frame,
+            textvariable=nombre_var,
+            height=40,
+            font=("Arial", 12),
+            placeholder_text="Ej: Nutella 240g"
+        )
+        nombre_entry.pack(fill="x", pady=(0, 15))
+        nombre_entry.focus_set()
+        
+        # Unidad
+        ctk.CTkLabel(
+            main_frame,
+            text="Unidad de Medida: *",
+            font=("Arial", 12, "bold"),
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        unidades_comunes = [
+            "PIEZA", "KG", "GRAMO", "LITRO", "ML", 
+            "CAJA", "PAQUETE", "BOLSA", "UNIDAD"
+        ]
+        
+        unidad_combo = ctk.CTkComboBox(
+            main_frame,
+            variable=unidad_var,
+            values=unidades_comunes,
+            height=40,
+            font=("Arial", 12)
+        )
+        unidad_combo.pack(fill="x", pady=(0, 20))
+        
+        # Info adicional
+        info_frame = ctk.CTkFrame(main_frame, fg_color=("gray90", "gray20"), corner_radius=8)
+        info_frame.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(
+            info_frame,
+            text="ℹ️ El producto se creará inmediatamente\ny estará disponible para esta compra",
+            font=("Arial", 10),
+            text_color="gray",
+            justify="left"
+        ).pack(padx=15, pady=10)
+        
+        # Variable para el resultado
+        resultado = {'success': False, 'producto': None}
+        
+        def guardar_producto():
+            """Guardar el nuevo producto"""
+            # FIX: Get value directly from entry widget for PyInstaller compatibility
+            # In frozen apps, StringVar.get() sometimes doesn't work correctly
+            try:
+                nombre = nombre_entry.get().strip()
+            except Exception as e:
+                print(f"Warning: Could not get value from nombre_entry: {e}")
+                nombre = nombre_var.get().strip()
+
+            try:
+                unidad = unidad_combo.get().strip()
+            except Exception as e:
+                print(f"Warning: Could not get value from unidad_combo: {e}")
+                unidad = unidad_var.get().strip()
+
+            # Debug logging
+            print(f"DEBUG: Creating product - Nombre: '{nombre}', Unidad: '{unidad}'")
+
+            # Validaciones
+            if not nombre:
+                messagebox.showerror("Error", "El nombre del producto es obligatorio", parent=ventana_producto)
+                nombre_entry.focus_set()
+                return
+            
+            if len(nombre) < 3:
+                messagebox.showerror("Error", "El nombre debe tener al menos 3 caracteres", parent=ventana_producto)
+                nombre_entry.focus_set()
+                return
+            
+            if not unidad:
+                messagebox.showerror("Error", "Debe seleccionar una unidad", parent=ventana_producto)
+                return
+            
+            try:
+                # Verificar si ya existe
+                self.cursor.execute(
+                    "SELECT id_producto FROM producto WHERE nombre_producto = %s",
+                    (nombre,)
+                )
+                if self.cursor.fetchone():
+                    messagebox.showerror(
+                        "Producto Duplicado",
+                        f"Ya existe un producto con el nombre:\n'{nombre}'",
+                        parent=ventana_producto
+                    )
+                    return
+                
+                # Insertar producto nuevo
+                query = """
+                    INSERT INTO producto (
+                        nombre_producto,
+                        unidad_producto,
+                        stock,
+                        es_especial
+                    ) VALUES (%s, %s, 0, FALSE)
+                """
+                
+                self.cursor.execute(query, (nombre, unidad))
+                self.conn.commit()
+                
+                # Obtener ID del producto recién creado
+                id_producto = self.cursor.lastrowid
+                
+                # Guardar resultado
+                resultado['success'] = True
+                resultado['producto'] = {
+                    'id_producto': id_producto,
+                    'nombre_producto': nombre,
+                    'unidad_producto': unidad,
+                    'es_especial': False
+                }
+                
+                messagebox.showinfo(
+                    "Éxito",
+                    f"Producto creado exitosamente:\n{nombre} ({unidad})",
+                    parent=ventana_producto
+                )
+                
+                ventana_producto.destroy()
+                
+            except Exception as e:
+                self.conn.rollback()
+                messagebox.showerror(
+                    "Error",
+                    f"Error al crear producto:\n{str(e)}",
+                    parent=ventana_producto
+                )
+        
+        # Botones
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(fill="x", pady=(0, 0))
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Cancelar",
+            command=ventana_producto.destroy,
+            fg_color="gray",
+            hover_color="darkgray",
+            width=200,
+            height=40,
+            font=("Arial", 12, "bold")
+        ).pack(side="left", expand=True, padx=5)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Crear Producto",
+            command=guardar_producto,
+            fg_color=COLORS['success'],
+            hover_color=COLORS['success_hover'],
+            width=200,
+            height=40,
+            font=("Arial", 12, "bold")
+        ).pack(side="right", expand=True, padx=5)
+        
+        # Esperar a que se cierre la ventana
+        ventana_producto.wait_window()
+        
+        # Si se creó el producto, recargar lista y seleccionarlo
+        if resultado['success']:
+            # Recargar productos
+            self.load_productos()
+            
+            # Actualizar combo
+            productos_nombres = [f"{p['nombre_producto']} ({p['unidad_producto']})" for p in self.productos]
+            self.producto_combo.configure(values=productos_nombres)
+            self.productos_completos = productos_nombres.copy()
+            
+            # Seleccionar el producto recién creado
+            nuevo_producto = resultado['producto']
+            texto_nuevo = f"{nuevo_producto['nombre_producto']} ({nuevo_producto['unidad_producto']})"
+            self.selected_product.set(texto_nuevo)
+            self.producto_combo.set(texto_nuevo)
+            
+            # Limpiar búsqueda
+            self.producto_search_var.set("")
+    
+    def load_catalogos(self):
+        """Cargar catálogos de métodos y formas de pago"""
+        try:
+            # Métodos de pago
+            self.cursor.execute("SELECT clave, descripcion FROM cat_metodo_pago WHERE activo = TRUE")
+            self.metodos_pago = self.cursor.fetchall()
+            
+            # Formas de pago
+            self.cursor.execute("SELECT clave, descripcion FROM cat_forma_pago WHERE activo = TRUE")
+            self.formas_pago = self.cursor.fetchall()
+        except:
+            # Si no existen las tablas, usar valores por defecto
+            self.metodos_pago = [
+                {'clave': 'PUE', 'descripcion': 'Pago en una sola exhibición'},
+                {'clave': 'PPD', 'descripcion': 'Pago en parcialidades o diferido'}
+            ]
+            self.formas_pago = [
+                {'clave': '01', 'descripcion': 'Efectivo'},
+                {'clave': '02', 'descripcion': 'Cheque nominativo'},
+                {'clave': '03', 'descripcion': 'Transferencia electrónica'},
+                {'clave': '04', 'descripcion': 'Tarjeta de crédito'},
+                {'clave': '28', 'descripcion': 'Tarjeta de débito'},
+                {'clave': '99', 'descripcion': 'Por definir'}
+            ]
+        
+    def create_interface(self):
+        """Crear la interfaz de usuario moderna"""
+        self.create_header()
+        self.create_main_content()
+        self.create_status_bar()
+    
+    def create_header(self):
+        """Create modern header with EXIT button"""
+        header_frame = ctk.CTkFrame(self.root, fg_color=COLORS['secondary'], height=70)
+        header_frame.pack(fill="x")
+        header_frame.pack_propagate(False)
+        
+        header_content = ctk.CTkFrame(header_frame, fg_color="transparent")
+        header_content.pack(fill="both", expand=True, padx=20, pady=15)
+        
+        # ✅ LEFT: EXIT BUTTON + TITLE
+        left_frame = ctk.CTkFrame(header_content, fg_color="transparent")
+        left_frame.pack(side="left", fill="y")
+        
+        # ✅ EXIT BUTTON (igual al de user_manager.py)
+        exit_btn = ctk.CTkButton(
+            left_frame,
+            text="⎋",  # Símbolo de escape/salir
+            width=40,
+            height=40,
+            corner_radius=8,
+            fg_color="transparent",
+            hover_color=COLORS.get('accent', '#e74c3c'),
+            font=("Arial", 20),
+            text_color="white",
+            border_width=0,
+            command=self.on_closing
+        )
+        exit_btn.pack(side="left", padx=(0, 15))
+        
+        # Título con badge de "FISCAL"
+        title_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        title_frame.pack(side="left")
+        
+        ctk.CTkLabel(
+            title_frame,
+            text="REGISTRO DE COMPRAS",
+            font=FONTS['title'],
+            text_color="white"
+        ).pack(side="left")
+        
+        # Badge fiscal
+        badge = ctk.CTkFrame(title_frame, fg_color=COLORS['success'], corner_radius=5)
+        badge.pack(side="left", padx=10)
+        ctk.CTkLabel(
+            badge,
+            text="FISCAL 2.0",
+            font=("Arial", 10, "bold"),
+            text_color="white"
+        ).pack(padx=8, pady=2)
+        
+        # User info on the right
+        user_frame = ctk.CTkFrame(header_content, fg_color="transparent")
+        user_frame.pack(side="right")
+        
+        role_color = COLORS['success'] if self.es_admin else COLORS['primary']
+        role_text = "ADMINISTRADOR" if self.es_admin else "USUARIO"
+        
+        ctk.CTkLabel(
+            user_frame,
+            text=f"Usuario: {self.user_data['nombre_completo']}",
+            font=FONTS['body'],
+            text_color="lightgray"
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkLabel(
+            user_frame,
+            text=f"Rol: {role_text}",
+            font=FONTS['body_bold'],
+            text_color=role_color
+        ).pack(side="left")
+    
+    def create_main_content(self):
+        """Create main content area"""
+        main_container = ctk.CTkFrame(self.root, fg_color="transparent")
+        main_container.pack(fill="both", expand=True, padx=20, pady=15)
+        
+        # Left side: Registration form (con scroll)
+        left_frame = ctk.CTkScrollableFrame(
+            main_container, 
+            fg_color=("gray90", "gray20"), 
+            corner_radius=15,
+            width=550
+        )
+        left_frame.pack(side="left", fill="both", padx=(0, 10), pady=0)
+        
+        self.create_registro_section(left_frame)
+        
+        # Right side: Purchase list
+        right_frame = ctk.CTkFrame(main_container, fg_color="transparent")
+        right_frame.pack(side="right", fill="both", expand=True, pady=0)
+        
+        self.create_lista_section(right_frame)
+    
+    def create_registro_section(self, parent):
+        """Crear sección de registro de nuevas compras CON CAMPOS FISCALES"""
+        # Header
+        header = ctk.CTkFrame(parent, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(20, 15))
+        
+        ctk.CTkLabel(
+            header,
+            text="REGISTRAR NUEVA COMPRA",
+            font=FONTS['subtitle'],
+            text_color=COLORS['primary']
+        ).pack(anchor="w")
+        
+        # Form container
+        form_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        form_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        
+        # =====================================================
+        # SECCIÓN 1: DATOS BÁSICOS DEL PRODUCTO
+        # =====================================================
+        self.create_section_header(form_frame, "📦 DATOS DEL PRODUCTO")
+        
+        # Producto
+        ctk.CTkLabel(
+            form_frame,
+            text="Producto: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(10, 5))
+        
+        # Frame para búsqueda y combo
+        producto_search_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        producto_search_frame.pack(fill="x", pady=(0, 15))
+        
+        # Entry de búsqueda
+        self.producto_search_var = ctk.StringVar()
+        self.producto_search_entry = ctk.CTkEntry(
+            producto_search_frame,
+            textvariable=self.producto_search_var,
+            placeholder_text="Escribe 2-3 letras para buscar...",
+            height=35,
+            font=FONTS['body']
+        )
+        self.producto_search_entry.pack(fill="x", pady=(0, 5))
+
+        # ComboBox de productos
+        productos_nombres = [f"{p['nombre_producto']} ({p['unidad_producto']})" for p in self.productos]
+        self.producto_combo = ctk.CTkComboBox(
+            producto_search_frame,
+            variable=self.selected_product,
+            values=productos_nombres,
+            state="readonly",
+            height=35,
+            font=FONTS['body']
+        )
+        self.producto_combo.pack(fill="x", pady=(0, 5))
+
+        # ✨ NUEVO: Botón para crear producto
+        btn_nuevo_producto = ctk.CTkButton(
+            producto_search_frame,
+            text="➕ Crear Producto Nuevo",
+            command=self.crear_producto_nuevo,
+            fg_color=COLORS['success'],
+            hover_color=COLORS['success_hover'],
+            height=35,
+            font=("Arial", 11, "bold")
+        )
+        btn_nuevo_producto.pack(fill="x")
+
+        # Conectar búsqueda con filtrado
+        # Use both trace AND key release for better compatibility
+        self.producto_search_var.trace("w", self.filtrar_productos)
+        self.producto_search_entry.bind("<KeyRelease>", self.filtrar_productos)
+        self.productos_completos = productos_nombres.copy()
+
+        # Add instruction label
+        info_label = ctk.CTkLabel(
+            producto_search_frame,
+            text="💡 Escribe en el campo de búsqueda y selecciona del menú desplegable",
+            font=("Arial", 9),
+            text_color="gray"
+        )
+        info_label.pack(fill="x", pady=(5, 0))
+        
+        # ✅ Fecha de Compra (fecha de la factura)
+        ctk.CTkLabel(
+            form_frame,
+            text="Fecha de Compra / Factura: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+
+        # Date picker frame
+        fecha_compra_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        fecha_compra_frame.pack(fill="x", pady=(0, 5))
+
+        if CALENDAR_AVAILABLE:
+            # Use calendar picker
+            self.fecha_compra_entry = DateEntry(
+                fecha_compra_frame,
+                width=25,
+                background='darkblue',
+                foreground='white',
+                borderwidth=2,
+                date_pattern='yyyy-mm-dd',
+                font=("Arial", 11)
+            )
+            self.fecha_compra_entry.pack(side="left", fill="x", expand=True)
+
+            # Update the StringVar when date changes
+            def update_fecha_compra(event=None):
+                self.fecha_compra_var.set(self.fecha_compra_entry.get())
+
+            self.fecha_compra_entry.bind("<<DateEntrySelected>>", update_fecha_compra)
+
+            # Calendar icon button
+            calendar_btn = ctk.CTkButton(
+                fecha_compra_frame,
+                text="📅",
+                width=40,
+                height=35,
+                command=lambda: self.fecha_compra_entry.drop_down(),
+                fg_color=COLORS.get('primary', '#2196F3'),
+                hover_color=COLORS.get('primary_hover', '#1976D2')
+            )
+            calendar_btn.pack(side="left", padx=(5, 0))
+        else:
+            # Fallback to text entry
+            self.fecha_compra_entry = ctk.CTkEntry(
+                fecha_compra_frame,
+                textvariable=self.fecha_compra_var,
+                height=35,
+                font=FONTS['body'],
+                placeholder_text="YYYY-MM-DD"
+            )
+            self.fecha_compra_entry.pack(fill="x")
+
+        ctk.CTkLabel(
+            form_frame,
+            text="ℹ️ Fecha que aparece en la factura (haz clic en 📅 para calendario)",
+            font=("Arial", 10),
+            text_color="gray"
+        ).pack(fill="x", pady=(0, 15))
+        
+        # ✅ Fecha de Registro (fecha en que se captura en el sistema)
+        ctk.CTkLabel(
+            form_frame,
+            text="Fecha de Registro en Sistema: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+
+        # Date picker frame
+        fecha_registro_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        fecha_registro_frame.pack(fill="x", pady=(0, 5))
+
+        if CALENDAR_AVAILABLE:
+            # Use calendar picker
+            self.fecha_registro_entry = DateEntry(
+                fecha_registro_frame,
+                width=25,
+                background='darkblue',
+                foreground='white',
+                borderwidth=2,
+                date_pattern='yyyy-mm-dd',
+                font=("Arial", 11)
+            )
+            self.fecha_registro_entry.pack(side="left", fill="x", expand=True)
+
+            # Update the StringVar when date changes
+            def update_fecha_registro(event=None):
+                self.fecha_registro_var.set(self.fecha_registro_entry.get())
+
+            self.fecha_registro_entry.bind("<<DateEntrySelected>>", update_fecha_registro)
+
+            # Calendar icon button
+            calendar_btn2 = ctk.CTkButton(
+                fecha_registro_frame,
+                text="📅",
+                width=40,
+                height=35,
+                command=lambda: self.fecha_registro_entry.drop_down(),
+                fg_color=COLORS.get('primary', '#2196F3'),
+                hover_color=COLORS.get('primary_hover', '#1976D2')
+            )
+            calendar_btn2.pack(side="left", padx=(5, 0))
+        else:
+            # Fallback to text entry
+            self.fecha_registro_entry = ctk.CTkEntry(
+                fecha_registro_frame,
+                textvariable=self.fecha_registro_var,
+                height=35,
+                font=FONTS['body'],
+                placeholder_text="YYYY-MM-DD"
+            )
+            self.fecha_registro_entry.pack(fill="x")
+
+        ctk.CTkLabel(
+            form_frame,
+            text="ℹ️ Fecha de hoy por defecto (haz clic en 📅 para calendario)",
+            font=("Arial", 10),
+            text_color="gray"
+        ).pack(fill="x", pady=(0, 15))
+        
+        # Cantidad
+        ctk.CTkLabel(
+            form_frame,
+            text="Cantidad: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        self.cantidad_entry = ctk.CTkEntry(
+            form_frame,
+            textvariable=self.cantidad_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="Ej: 100"
+        )
+        self.cantidad_entry.pack(fill="x", pady=(0, 15))
+        
+        # Precio unitario
+        ctk.CTkLabel(
+            form_frame,
+            text="Precio por Unidad: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        precio_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        precio_frame.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(
+            precio_frame,
+            text="$",
+            font=FONTS['subheader']
+        ).pack(side="left", padx=(0, 5))
+        
+        self.precio_entry = ctk.CTkEntry(
+            precio_frame,
+            textvariable=self.precio_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="Ej: 25.50"
+        )
+        self.precio_entry.pack(side="left", fill="x", expand=True)
+        
+        # =====================================================
+        # SECCIÓN 2: INFORMACIÓN FISCAL Y PROVEEDOR
+        # =====================================================
+        self.create_section_header(form_frame, "🏛️ INFORMACIÓN FISCAL")
+        
+        # Folio de Factura
+        ctk.CTkLabel(
+            form_frame,
+            text="Folio Fiscal (UUID) / No. Factura: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(10, 5))
+        
+        self.folio_entry = ctk.CTkEntry(
+            form_frame,
+            textvariable=self.folio_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="Ej: A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
+        )
+        self.folio_entry.pack(fill="x", pady=(0, 15))
+        
+        # Proveedor
+        ctk.CTkLabel(
+            form_frame,
+            text="Proveedor (Razón Social): *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        self.proveedor_entry = ctk.CTkEntry(
+            form_frame,
+            textvariable=self.proveedor_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="Ej: Distribuidora Nacional S.A. de C.V."
+        )
+        self.proveedor_entry.pack(fill="x", pady=(0, 15))
+        
+        # RFC del Proveedor
+        ctk.CTkLabel(
+            form_frame,
+            text="RFC del Proveedor: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        rfc_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        rfc_frame.pack(fill="x", pady=(0, 15))
+        
+        self.rfc_entry = ctk.CTkEntry(
+            rfc_frame,
+            textvariable=self.rfc_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="Ej: ABC123456XYZ"
+        )
+        self.rfc_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        # Botón de validación de RFC
+        self.validate_rfc_btn = ctk.CTkButton(
+            rfc_frame,
+            text="✓",
+            width=35,
+            height=35,
+            command=self.validar_rfc,
+            fg_color=COLORS['success'],
+            hover_color=COLORS['success_hover']
+        )
+        self.validate_rfc_btn.pack(side="left")
+        
+        # =====================================================
+        # SECCIÓN 3: IMPUESTOS Y COSTOS ESPECIALES
+        # =====================================================
+        self.create_section_header(form_frame, "💰 IMPUESTOS Y FINANCIAMIENTO")
+        
+        # ✅ CHECKBOX IVA (nuevo)
+        iva_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        iva_frame.pack(fill="x", pady=(10, 15))
+        
+        self.iva_checkbox = ctk.CTkCheckBox(
+            iva_frame,
+            text="Incluir IVA (16%)",
+            variable=self.incluir_iva_var,
+            font=FONTS['subheader'],
+            checkbox_width=25,
+            checkbox_height=25
+        )
+        self.iva_checkbox.pack(side="left")
+        
+        ctk.CTkLabel(
+            iva_frame,
+            text="  ℹ️ Desmarcar si la compra NO es deducible",
+            font=("Arial", 10),
+            text_color="gray"
+        ).pack(side="left", padx=(10, 0))
+        
+        # IEPS
+        ctk.CTkLabel(
+            form_frame,
+            text="Importe IEPS:",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(10, 5))
+        
+        ieps_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        ieps_frame.pack(fill="x", pady=(0, 10))
+        
+        ctk.CTkLabel(ieps_frame, text="$", font=FONTS['subheader']).pack(side="left", padx=(0, 5))
+        
+        self.ieps_entry = ctk.CTkEntry(
+            ieps_frame,
+            textvariable=self.ieps_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="0.00"
+        )
+        self.ieps_entry.pack(side="left", fill="x", expand=True)
+        
+        ctk.CTkLabel(
+            form_frame,
+            text="ℹ️ Solo si aplica (bebidas, combustibles, tabaco)",
+            font=("Arial", 10),
+            text_color="gray"
+        ).pack(fill="x", pady=(0, 15))
+        
+        # Tasa de Interés
+        ctk.CTkLabel(
+            form_frame,
+            text="Tasa de Interés (si es a crédito):",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        interes_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        interes_frame.pack(fill="x", pady=(0, 10))
+        
+        self.tasa_entry = ctk.CTkEntry(
+            interes_frame,
+            textvariable=self.tasa_interes_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="0.00"
+        )
+        self.tasa_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        ctk.CTkLabel(interes_frame, text="%", font=FONTS['subheader']).pack(side="left")
+        
+        ctk.CTkLabel(
+            form_frame,
+            text="ℹ️ Dejar en 0 si la compra es de contado",
+            font=("Arial", 10),
+            text_color="gray"
+        ).pack(fill="x", pady=(0, 20))
+        
+        # =====================================================
+        # SECCIÓN 4: MÉTODO Y FORMA DE PAGO
+        # =====================================================
+        self.create_section_header(form_frame, "💳 MÉTODO Y FORMA DE PAGO")
+        
+        # Método de Pago
+        ctk.CTkLabel(
+            form_frame,
+            text="Método de Pago (SAT): *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(10, 5))
+        
+        metodos_display = [f"{m['clave']} - {m['descripcion']}" for m in self.metodos_pago]
+        self.metodo_combo = ctk.CTkComboBox(
+            form_frame,
+            variable=self.metodo_pago_var,
+            values=metodos_display,
+            state="readonly",
+            height=35,
+            font=FONTS['body']
+        )
+        self.metodo_combo.pack(fill="x", pady=(0, 10))
+        
+        ctk.CTkLabel(
+            form_frame,
+            text="ℹ️ PUE = Pago único | PPD = Pagos diferidos",
+            font=("Arial", 10),
+            text_color="gray"
+        ).pack(fill="x", pady=(0, 15))
+        
+        # Forma de Pago
+        ctk.CTkLabel(
+            form_frame,
+            text="Forma de Pago: *",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(0, 5))
+        
+        formas_display = [f"{f['clave']} - {f['descripcion']}" for f in self.formas_pago]
+        self.forma_combo = ctk.CTkComboBox(
+            form_frame,
+            variable=self.forma_pago_var,
+            values=formas_display,
+            state="readonly",
+            height=35,
+            font=FONTS['body']
+        )
+        self.forma_combo.pack(fill="x", pady=(0, 10))
+        
+        # Advertencia para efectivo
+        self.efectivo_warning = ctk.CTkFrame(form_frame, fg_color=("#fef3c7", "#92400e"), corner_radius=8)
+        
+        warning_content = ctk.CTkFrame(self.efectivo_warning, fg_color="transparent")
+        warning_content.pack(fill="x", padx=10, pady=8)
+        
+        ctk.CTkLabel(
+            warning_content,
+            text="⚠️",
+            font=("Arial", 16)
+        ).pack(side="left", padx=(0, 8))
+        
+        ctk.CTkLabel(
+            warning_content,
+            text="Pagos en efectivo > $2,000 NO son deducibles",
+            font=("Arial", 10, "bold"),
+            text_color=("#92400e", "#fef3c7")
+        ).pack(side="left")
+        
+        # =====================================================
+        # SECCIÓN 5: NOTAS Y OBSERVACIONES
+        # =====================================================
+        self.create_section_header(form_frame, "📝 NOTAS ADICIONALES")
+        
+        ctk.CTkLabel(
+            form_frame,
+            text="Observaciones:",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(fill="x", pady=(10, 5))
+        
+        self.notas_entry = ctk.CTkEntry(
+            form_frame,
+            textvariable=self.notas_var,
+            height=35,
+            font=FONTS['body'],
+            placeholder_text="Información adicional (opcional)"
+        )
+        self.notas_entry.pack(fill="x", pady=(0, 20))
+        
+        # =====================================================
+        # CÁLCULO DE TOTALES
+        # =====================================================
+        total_card = ctk.CTkFrame(form_frame, fg_color=("gray85", "gray25"), corner_radius=10)
+        total_card.pack(fill="x", pady=(10, 0))
+        
+        total_content = ctk.CTkFrame(total_card, fg_color="transparent")
+        total_content.pack(fill="x", padx=15, pady=15)
+        
+        # Grid de cálculos
+        calc_frame = ctk.CTkFrame(total_content, fg_color="transparent")
+        calc_frame.pack(fill="x")
+        
+        # Subtotal
+        row1 = ctk.CTkFrame(calc_frame, fg_color="transparent")
+        row1.pack(fill="x", pady=2)
+        ctk.CTkLabel(row1, text="Subtotal:", font=FONTS['body'], text_color="gray").pack(side="left")
+        self.subtotal_label = ctk.CTkLabel(row1, text="$0.00", font=FONTS['body_bold'])
+        self.subtotal_label.pack(side="right")
+        
+        # IVA 16%
+        row2 = ctk.CTkFrame(calc_frame, fg_color="transparent")
+        row2.pack(fill="x", pady=2)
+        ctk.CTkLabel(row2, text="IVA (16%):", font=FONTS['body'], text_color="gray").pack(side="left")
+        self.iva_label = ctk.CTkLabel(row2, text="$0.00", font=FONTS['body_bold'])
+        self.iva_label.pack(side="right")
+        
+        # IEPS
+        row3 = ctk.CTkFrame(calc_frame, fg_color="transparent")
+        row3.pack(fill="x", pady=2)
+        ctk.CTkLabel(row3, text="IEPS:", font=FONTS['body'], text_color="gray").pack(side="left")
+        self.ieps_total_label = ctk.CTkLabel(row3, text="$0.00", font=FONTS['body_bold'])
+        self.ieps_total_label.pack(side="right")
+        
+        # Separador
+        separator = ctk.CTkFrame(calc_frame, fg_color="gray", height=2)
+        separator.pack(fill="x", pady=10)
+        
+        # Total
+        row4 = ctk.CTkFrame(calc_frame, fg_color="transparent")
+        row4.pack(fill="x", pady=5)
+        ctk.CTkLabel(row4, text="TOTAL:", font=("Arial", 16, "bold"), text_color="gray").pack(side="left")
+        self.total_label = ctk.CTkLabel(
+            row4, 
+            text="$0.00", 
+            font=("Arial", 20, "bold"),
+            text_color=COLORS['success']
+        )
+        self.total_label.pack(side="right")
+        
+        # Conectar cálculo automático
+        self.cantidad_var.trace("w", self.calcular_totales)
+        self.precio_var.trace("w", self.calcular_totales)
+        self.ieps_var.trace("w", self.calcular_totales)
+        self.forma_pago_var.trace("w", self.verificar_efectivo)
+        
+        # =====================================================
+        # BOTONES DE ACCIÓN
+        # =====================================================
+        button_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        button_frame.pack(fill="x", pady=(20, 0))
+        
+        ctk.CTkButton(
+            button_frame,
+            text="✓ REGISTRAR COMPRA",
+            command=self.registrar_compra,
+            fg_color=COLORS['success'],
+            hover_color=COLORS['success_hover'],
+            height=45,
+            font=("Arial", 14, "bold")
+        ).pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        ctk.CTkButton(
+            button_frame,
+            text="🗑️ LIMPIAR",
+            command=self.limpiar_formulario,
+            fg_color=COLORS['accent'],
+            height=45,
+            font=("Arial", 14, "bold")
+        ).pack(side="left", fill="x", expand=True, padx=(5, 0))
+    
+    def create_section_header(self, parent, text):
+        """Crear encabezado de sección"""
+        header = ctk.CTkFrame(parent, fg_color=COLORS['primary'], corner_radius=5, height=35)
+        header.pack(fill="x", pady=(15, 5))
+        header.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            header,
+            text=text,
+            font=("Arial", 12, "bold"),
+            text_color="white"
+        ).pack(pady=7)
+    
+    def filtrar_productos(self, *args):
+        """Filtrar productos según búsqueda"""
+        # FIX: Get value directly from entry for PyInstaller compatibility
+        try:
+            search_text = self.producto_search_entry.get().lower()
+        except:
+            search_text = self.producto_search_var.get().lower()
+
+        # Debug logging
+        print(f"DEBUG: Filtering products with search: '{search_text}'")
+
+        if search_text:
+            filtered = [p for p in self.productos_completos if search_text in p.lower()]
+            print(f"DEBUG: Found {len(filtered)} matching products")
+
+            # Update ComboBox values
+            if filtered:
+                self.producto_combo.configure(values=filtered)
+                # Auto-open the dropdown to show results
+                try:
+                    self.producto_combo._open_dropdown_menu()
+                except:
+                    pass  # Method might not exist in all versions
+            else:
+                self.producto_combo.configure(values=["No se encontraron productos"])
+        else:
+            self.producto_combo.configure(values=self.productos_completos)
+    
+    def validar_rfc(self):
+        """Validar formato de RFC"""
+        rfc = self.rfc_var.get().upper().strip()
+        
+        # Patrón de RFC: 3-4 letras + 6 dígitos + 3 caracteres alfanuméricos
+        patron_rfc = r'^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$'
+        
+        if re.match(patron_rfc, rfc):
+            messagebox.showinfo("✓ RFC Válido", f"El RFC '{rfc}' tiene un formato válido.")
+            self.validate_rfc_btn.configure(fg_color=COLORS['success'])
+        else:
+            messagebox.showerror(
+                "✗ RFC Inválido", 
+                "El RFC no tiene un formato válido.\n\n"
+                "Formato correcto:\n"
+                "- Personas Morales: 3 letras + 6 dígitos + 3 alfanuméricos\n"
+                "- Personas Físicas: 4 letras + 6 dígitos + 3 alfanuméricos"
+            )
+            self.validate_rfc_btn.configure(fg_color=COLORS['danger'])
+    
+    def calcular_totales(self, *args):
+        """Calcular subtotal, IVA, IEPS y total"""
+        try:
+            cantidad = Decimal(self.cantidad_var.get() or "0")
+            precio = Decimal(self.precio_var.get() or "0")
+            ieps = Decimal(self.ieps_var.get() or "0")
+            
+            subtotal = cantidad * precio
+            iva = subtotal * Decimal("0.16")
+            total = subtotal + iva + ieps
+            
+            self.subtotal_label.configure(text=f"${subtotal:,.2f}")
+            self.iva_label.configure(text=f"${iva:,.2f}")
+            self.ieps_total_label.configure(text=f"${ieps:,.2f}")
+            self.total_label.configure(text=f"${total:,.2f}")
+        except:
+            self.subtotal_label.configure(text="$0.00")
+            self.iva_label.configure(text="$0.00")
+            self.ieps_total_label.configure(text="$0.00")
+            self.total_label.configure(text="$0.00")
+    
+    def verificar_efectivo(self, *args):
+        """Mostrar advertencia si el pago es en efectivo y supera $2,000"""
+        try:
+            forma = self.forma_pago_var.get()
+            cantidad = Decimal(self.cantidad_var.get() or "0")
+            precio = Decimal(self.precio_var.get() or "0")
+            subtotal = cantidad * precio
+            
+            if forma.startswith("01") and subtotal > 2000:
+                self.efectivo_warning.pack(fill="x", pady=(0, 15))
+            else:
+                self.efectivo_warning.pack_forget()
+        except:
+            pass
+    
+    def registrar_compra(self):
+        """Registrar nueva compra con validación completa"""
+        try:
+             # ✅ MODIFICADO: Solo producto es obligatorio
+            if not self.selected_product.get():
+                messagebox.showerror("Error", "Debe seleccionar un producto")
+                return
+            
+            # ✅ NUEVO: Advertencia si falta info fiscal (pero permite continuar)
+            tiene_info_fiscal = bool(
+                self.folio_var.get().strip() and 
+                self.proveedor_var.get().strip() and 
+                self.rfc_var.get().strip()
+            )
+            
+            if not tiene_info_fiscal:
+                if not messagebox.askyesno(
+                    "⚠️ Compra sin Información Fiscal",
+                    "Esta compra NO tiene información fiscal completa.\n\n"
+                    "Esto significa que:\n"
+                    "• No será deducible de impuestos\n"
+                    "• Es una compra informal/sin factura\n\n"
+                    "¿Desea continuar con este registro?",
+                    icon="warning"
+                ):
+                    return
+            
+            # Convertir valores
+            cantidad = Decimal(self.cantidad_var.get())
+            precio = Decimal(self.precio_var.get())
+            ieps = Decimal(self.ieps_var.get() or "0")
+            tasa_interes = Decimal(self.tasa_interes_var.get() or "0")
+            
+            # Validaciones de negocio
+            if cantidad <= 0:
+                messagebox.showerror("Error", "La cantidad debe ser mayor que 0")
+                return
+            
+            if precio <= 0:
+                messagebox.showerror("Error", "El precio debe ser mayor que 0")
+                return
+            
+            # Validar fecha de compra
+            fecha_valida, resultado = self.validar_fecha(self.fecha_compra_var.get())
+            if not fecha_valida:
+                messagebox.showerror("Error de Fecha", resultado)
+                return
+            
+            # Validar fecha de registro
+            fecha_registro_valida, resultado_registro = self.validar_fecha(self.fecha_registro_var.get())
+            if not fecha_registro_valida:
+                messagebox.showerror("Error de Fecha de Registro", resultado_registro)
+                return
+            
+            # ✅ MODIFICADO: Validar RFC solo si se proporcionó
+            rfc = self.rfc_var.get().upper().strip()
+            if rfc:  # Solo validar si no está vacío
+                patron_rfc = r'^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$'
+                if not re.match(patron_rfc, rfc):
+                    if not messagebox.askyesno(
+                        "RFC Inválido",
+                        "El RFC no tiene un formato válido.\n¿Desea continuar de todos modos?"
+                    ):
+                        return
+            
+            # Calcular totales (IVA opcional)
+            subtotal = cantidad * precio
+            iva = subtotal * Decimal("0.16") if self.incluir_iva_var.get() else Decimal("0.00")
+            total = subtotal + iva + ieps
+            
+            # Obtener ID del producto
+            producto_texto = self.selected_product.get()
+            producto_seleccionado = None
+            for p in self.productos:
+                if f"{p['nombre_producto']} ({p['unidad_producto']})" == producto_texto:
+                    producto_seleccionado = p
+                    break
+            
+            if not producto_seleccionado:
+                messagebox.showerror("Error", "Producto no válido")
+                return
+            
+            # Extraer claves de método y forma de pago
+            metodo_pago = self.metodo_pago_var.get().split(" - ")[0]
+            forma_pago = self.forma_pago_var.get().split(" - ")[0]
+            
+            # Advertencia final para efectivo
+            if forma_pago == "01" and subtotal > 2000:
+                if not messagebox.askyesno(
+                    "⚠️ Advertencia Fiscal",
+                    f"El pago en efectivo es de ${subtotal:,.2f}\n\n"
+                    "Según el SAT, pagos en efectivo mayores a $2,000\n"
+                    "NO son deducibles de impuestos.\n\n"
+                    "¿Desea continuar con este registro?"
+                ):
+                    return
+            
+            # Insertar en base de datos
+            query = """
+                INSERT INTO compra (
+                    id_producto, cantidad_compra, precio_unitario_compra, fecha_compra, fecha_registro,
+                    folio_factura, proveedor, rfc_proveedor, importe_ieps, tasa_interes,
+                    metodo_pago, forma_pago, subtotal, iva, total_con_impuestos,
+                    usuario_registro, notas
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+            """
+            
+            valores = (
+                producto_seleccionado['id_producto'],
+                float(cantidad),
+                float(precio),
+                self.fecha_compra_var.get(),  # Fecha de la factura/compra
+                self.fecha_registro_var.get(),  # Fecha de registro en sistema
+                self.folio_var.get().strip() or None,  # ✅ None si vacío
+                self.proveedor_var.get().strip() or None,  # ✅ None si vacío
+                rfc or None,  # ✅ None si vacío
+                float(ieps),
+                float(tasa_interes),
+                metodo_pago,
+                forma_pago,
+                float(subtotal),
+                float(iva),
+                float(total),
+                self.user_data['nombre_completo'],
+                self.notas_var.get().strip() or None
+            )
+            
+            self.cursor.execute(query, valores)
+            
+            # Actualizar stock
+            self.cursor.execute(
+                "UPDATE producto SET stock = stock + %s WHERE id_producto = %s",
+                (float(cantidad), producto_seleccionado['id_producto'])
+            )
+            
+            self.conn.commit()
+            
+            messagebox.showinfo(
+                "✓ Éxito",
+                f"Compra registrada exitosamente\n\n"
+                f"Folio: {self.folio_var.get()}\n"
+                f"Proveedor: {self.proveedor_var.get()}\n"
+                f"Total: ${total:,.2f}"
+            )
+            
+            self.limpiar_formulario()
+            self.load_compras()
+            self.update_status(f"Compra registrada - Total: ${total:,.2f}")
+            
+        except Exception as e:
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al registrar la compra:\n{str(e)}")
+    
+    def validar_fecha(self, fecha_str):
+        """Valida que la fecha esté en formato correcto y no sea futura"""
+        try:
+            fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
+            fecha_actual = datetime.now()
+            
+            if fecha <= fecha_actual:
+                return True, fecha
+            else:
+                return False, "No se pueden registrar fechas futuras"
+        except ValueError:
+            return False, "Formato de fecha inválido. Use YYYY-MM-DD"
+    
+    def limpiar_formulario(self):
+        """Limpiar todos los campos del formulario"""
+        self.producto_search_var.set("")
+        self.selected_product.set("")
+        self.cantidad_var.set("")
+        self.precio_var.set("")
+        self.fecha_compra_var.set(datetime.now().strftime("%Y-%m-%d"))
+        self.fecha_registro_var.set(datetime.now().strftime("%Y-%m-%d"))
+        self.folio_var.set("")
+        self.proveedor_var.set("")
+        self.rfc_var.set("")
+        self.incluir_iva_var.set(True)  # Reset a incluir IVA por defecto
+        self.ieps_var.set("0.00")
+        self.tasa_interes_var.set("0.00")
+        self.metodo_pago_var.set("PUE")
+        self.forma_pago_var.set("03")
+        self.notas_var.set("")
+        self.validate_rfc_btn.configure(fg_color=COLORS['success'])
+        self.efectivo_warning.pack_forget()
+    
+    def create_lista_section(self, parent):
+        """Crear sección de lista de compras (versión simplificada)"""
+        # Header con filtro
+        header = ctk.CTkFrame(parent, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            header,
+            text="HISTORIAL DE COMPRAS",
+            font=FONTS['subtitle'],
+            text_color=COLORS['primary']
+        ).pack(side="left")
+        
+        # Filtro
+        search_frame = ctk.CTkFrame(header, fg_color="transparent")
+        search_frame.pack(side="right")
+        
+        self.filtro_entry = ctk.CTkEntry(
+            search_frame,
+            textvariable=self.filtro_var,
+            placeholder_text="Buscar por producto, proveedor o folio...",
+            width=300,
+            height=35,
+            font=FONTS['body']
+        )
+        self.filtro_entry.pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            search_frame,
+            text="🔍",
+            width=35,
+            height=35,
+            command=self.filtrar_compras,
+            fg_color=COLORS['primary']
+        ).pack(side="left")
+        
+        # Lista con scroll
+        self.lista_frame = ctk.CTkScrollableFrame(
+            parent,
+            fg_color=("gray90", "gray20"),
+            corner_radius=15
+        )
+        self.lista_frame.pack(fill="both", expand=True)
+    
+    def load_compras(self):
+        """Cargar compras desde la base de datos"""
+        try:
+            query = """
+                SELECT 
+                    c.id_compra,
+                    c.fecha_compra,
+                    c.fecha_registro,
+                    c.id_producto,
+                    p.nombre_producto,
+                    p.unidad_producto,
+                    c.cantidad_compra,
+                    c.precio_unitario_compra,
+                    c.folio_factura,
+                    c.proveedor,
+                    c.rfc_proveedor,
+                    c.metodo_pago,
+                    c.forma_pago,
+                    c.subtotal,
+                    c.iva,
+                    c.importe_ieps,
+                    c.tasa_interes,
+                    c.total_con_impuestos,
+                    c.notas
+                FROM compra c
+                INNER JOIN producto p ON c.id_producto = p.id_producto
+                ORDER BY c.fecha_compra DESC, c.id_compra DESC
+            """
+            self.cursor.execute(query)
+            self.all_compras = self.cursor.fetchall()
+            self.mostrar_compras(self.all_compras)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar compras: {str(e)}")
+    
+    def mostrar_compras(self, compras):
+        """Mostrar compras en la lista"""
+        # Limpiar lista actual
+        for widget in self.lista_frame.winfo_children():
+            widget.destroy()
+        
+        if not compras:
+            ctk.CTkLabel(
+                self.lista_frame,
+                text="No hay compras registradas",
+                font=FONTS['body'],
+                text_color="gray"
+            ).pack(pady=50)
+            return
+        
+        # Mostrar compras
+        for compra in compras:
+            self.crear_compra_card(compra)
+    
+    def crear_compra_card(self, compra):
+        """Crear tarjeta visual para cada compra - VERSIÓN MEJORADA"""
+        card = ctk.CTkFrame(
+            self.lista_frame,
+            fg_color=("white", "gray25"),
+            corner_radius=10
+        )
+        card.pack(fill="x", padx=5, pady=5)
+        
+        content = ctk.CTkFrame(card, fg_color="transparent")
+        content.pack(fill="x", padx=15, pady=12)
+        
+        # Row 1: Producto y fecha
+        row1 = ctk.CTkFrame(content, fg_color="transparent")
+        row1.pack(fill="x", pady=(0, 8))
+        
+        ctk.CTkLabel(
+            row1,
+            text=f"{compra['nombre_producto']} ({compra['unidad_producto']})",
+            font=FONTS['subheader'],
+            anchor="w"
+        ).pack(side="left")
+        
+        # ✅ MEJORADO: Manejo seguro de fecha
+        try:
+            fecha_texto = compra['fecha_compra'].strftime("%d/%m/%Y")
+        except:
+            fecha_texto = str(compra['fecha_compra'])
+        
+        ctk.CTkLabel(
+            row1,
+            text=fecha_texto,
+            font=FONTS['body'],
+            text_color="gray"
+        ).pack(side="right")
+        
+        # Row 2: Info fiscal - ✅ MEJORADO: Manejar valores NULL
+        row2 = ctk.CTkFrame(content, fg_color="transparent")
+        row2.pack(fill="x", pady=(0, 8))
+        
+        # Construir info fiscal solo con datos disponibles
+        proveedor = compra.get('proveedor') or "Sin proveedor"
+        rfc = compra.get('rfc_proveedor') or "Sin RFC"
+        folio = compra.get('folio_factura') or "Sin folio"
+        
+        fiscal_info = f"🏛️ {proveedor} | RFC: {rfc} | Folio: {folio}"
+        
+        # Si no hay info fiscal, mostrar advertencia
+        if proveedor == "Sin proveedor" and rfc == "Sin RFC" and folio == "Sin folio":
+            fiscal_info = "⚠️ COMPRA INFORMAL (Sin información fiscal)"
+        
+        ctk.CTkLabel(
+            row2,
+            text=fiscal_info,
+            font=("Arial", 10),
+            text_color="gray",
+            anchor="w"
+        ).pack(side="left")
+        
+        # Row 3: Detalles de pago
+        row3 = ctk.CTkFrame(content, fg_color="transparent")
+        row3.pack(fill="x", pady=(0, 8))
+        
+        # ✅ MEJORADO: Manejo seguro de metodo_pago
+        metodo_pago = compra.get('metodo_pago') or 'PUE'
+        metodo_text = "PUE" if metodo_pago == "PUE" else "PPD"
+        
+        # ✅ FIX: Usar colores que SÍ existen
+        try:
+            metodo_color = COLORS['success'] if metodo_pago == "PUE" else COLORS.get('warning', '#f39c12')
+        except:
+            metodo_color = '#27ae60' if metodo_pago == "PUE" else '#f39c12'
+        
+        badge_metodo = ctk.CTkFrame(row3, fg_color=metodo_color, corner_radius=5)
+        badge_metodo.pack(side="left", padx=(0, 5))
+        ctk.CTkLabel(badge_metodo, text=metodo_text, font=("Arial", 9, "bold"), text_color="white").pack(padx=6, pady=2)
+        
+        # ✅ MEJORADO: Conversión segura a float
+        try:
+            cantidad = float(compra['cantidad_compra'])
+            precio = float(compra['precio_unitario_compra'])
+        except:
+            cantidad = 0
+            precio = 0
+        
+        ctk.CTkLabel(
+            row3,
+            text=f"Cant: {cantidad:,.2f} | P.U: ${precio:,.2f}",
+            font=("Arial", 10),
+            text_color="gray"
+        ).pack(side="left", padx=5)
+        
+        # Row 4: Totales - ✅ MEJORADO
+        row4 = ctk.CTkFrame(content, fg_color="transparent")
+        row4.pack(fill="x")
+        
+        # Convertir valores de forma segura
+        try:
+            subtotal = float(compra.get('subtotal', 0))
+            iva = float(compra.get('iva', 0))
+            total = float(compra.get('total_con_impuestos', 0))
+        except:
+            subtotal = 0
+            iva = 0
+            total = 0
+        
+        info_frame = ctk.CTkFrame(row4, fg_color="transparent")
+        info_frame.pack(side="left")
+        
+        ctk.CTkLabel(
+            info_frame,
+            text=f"Subtotal: ${subtotal:,.2f} | IVA: ${iva:,.2f}",
+            font=("Arial", 9),
+            text_color="gray"
+        ).pack()
+        
+        # Total destacado
+        total_label = ctk.CTkLabel(
+            row4,
+            text=f"${total:,.2f}",
+            font=("Arial", 16, "bold"),
+            text_color=COLORS.get('success', '#27ae60')
+        )
+        total_label.pack(side="right")
+        
+        # Botones de acción
+        button_frame = ctk.CTkFrame(content, fg_color="transparent")
+        button_frame.pack(fill="x", pady=(8, 0))
+        
+        # ✅ MEJORADO: Pasar compra como diccionario completo
+        ctk.CTkButton(
+            button_frame,
+            text="✏️ Editar",
+            width=100,
+            height=30,
+            command=lambda: self.editar_compra(dict(compra)),  # Convertir a dict
+            fg_color=COLORS.get('accent', '#3498db'),
+            font=("Arial", 11)
+        ).pack(side="left", padx=5)
+        
+        if self.es_admin:
+            ctk.CTkButton(
+                button_frame,
+                text="🗑️ Eliminar",
+                width=100,
+                height=30,
+                command=lambda: self.eliminar_compra(compra['id_compra']),
+                fg_color=COLORS.get('error_red', '#e74c3c'),
+                font=("Arial", 11)
+            ).pack(side="left")
+    
+    def filtrar_compras(self):
+        """Filtrar compras por texto de búsqueda"""
+        filtro = self.filtro_var.get().lower()
+        if not filtro:
+            self.mostrar_compras(self.all_compras)
+            return
+        
+        compras_filtradas = [
+            c for c in self.all_compras
+            if filtro in c['nombre_producto'].lower()
+            or filtro in (c['proveedor'] or "").lower()
+            or filtro in (c['folio_factura'] or "").lower()
+            or filtro in (c['rfc_proveedor'] or "").lower()
+        ]
+        
+        self.mostrar_compras(compras_filtradas)
+    
+    def editar_compra(self, compra):
+        """Editar una compra existente - FUNCIÓN COMPLETA"""
+        
+        # Crear ventana de edición
+        ventana_edicion = ctk.CTkToplevel(self.root)
+        ventana_edicion.title(f"Editar Compra - Folio: {compra['folio_factura'] or 'Sin folio'}")
+        ventana_edicion.geometry("800x900")
+        ventana_edicion.transient(self.root)
+        ventana_edicion.grab_set()
+        
+        # Centrar ventana
+        ventana_edicion.update_idletasks()
+        x = (ventana_edicion.winfo_screenwidth() // 2) - (800 // 2)
+        y = (ventana_edicion.winfo_screenheight() // 2) - (900 // 2)
+        ventana_edicion.geometry(f"800x900+{x}+{y}")
+        
+        # Frame principal con scroll
+        main_frame = ctk.CTkScrollableFrame(ventana_edicion, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Título
+        header = ctk.CTkFrame(main_frame, fg_color=COLORS['secondary'], corner_radius=10)
+        header.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(
+            header,
+            text=f"✏️ EDITAR COMPRA",
+            font=("Arial", 20, "bold"),
+            text_color="white"
+        ).pack(pady=15)
+        
+        # Variables para el formulario
+        producto_var = ctk.StringVar(value=f"{compra['nombre_producto']} ({compra['unidad_producto']})")
+        cantidad_var = ctk.StringVar(value=str(float(compra['cantidad_compra'])))
+        precio_var = ctk.StringVar(value=str(float(compra['precio_unitario_compra'])))
+        fecha_compra_var = ctk.StringVar(value=str(compra['fecha_compra']))
+        fecha_registro_var = ctk.StringVar(value=str(compra.get('fecha_registro', compra['fecha_compra'])))  # Fallback a fecha_compra si no existe
+        folio_var = ctk.StringVar(value=compra['folio_factura'] or "")
+        proveedor_var = ctk.StringVar(value=compra['proveedor'] or "")
+        rfc_var = ctk.StringVar(value=compra['rfc_proveedor'] or "")
+        # Determinar si tiene IVA (si iva > 0 entonces sí incluye IVA)
+        incluir_iva_var = ctk.BooleanVar(value=float(compra.get('iva', 0)) > 0)
+        ieps_var = ctk.StringVar(value=str(float(compra.get('importe_ieps', 0))))
+        interes_var = ctk.StringVar(value=str(float(compra.get('tasa_interes', 0))))
+        metodo_var = ctk.StringVar(value=compra.get('metodo_pago', 'PUE'))
+        forma_var = ctk.StringVar(value=compra.get('forma_pago', '03'))
+        notas_var = ctk.StringVar(value=compra.get('notas', '') or "")
+        
+        # SECCIÓN: Producto
+        seccion_producto = ctk.CTkFrame(main_frame, fg_color=("gray95", "gray20"), corner_radius=10)
+        seccion_producto.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            seccion_producto,
+            text="📦 PRODUCTO",
+            font=("Arial", 14, "bold"),
+            text_color=COLORS['primary']
+        ).pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # Producto (solo lectura - mostrar info)
+        info_producto = ctk.CTkFrame(seccion_producto, fg_color="transparent")
+        info_producto.pack(fill="x", padx=15, pady=(0, 10))
+        
+        ctk.CTkLabel(info_producto, text="Producto:", font=("Arial", 11, "bold"), anchor="w").pack(fill="x")
+        ctk.CTkLabel(
+            info_producto,
+            text=producto_var.get(),
+            font=("Arial", 12),
+            text_color="gray"
+        ).pack(fill="x", pady=(0, 10))
+        
+        # Cantidad
+        ctk.CTkLabel(seccion_producto, text="Cantidad: *", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+        cantidad_entry = ctk.CTkEntry(seccion_producto, textvariable=cantidad_var, height=35, font=("Arial", 12))
+        cantidad_entry.pack(fill="x", padx=15, pady=(5, 10))
+        
+        # Precio
+        ctk.CTkLabel(seccion_producto, text="Precio Unitario: *", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+        precio_entry = ctk.CTkEntry(seccion_producto, textvariable=precio_var, height=35, font=("Arial", 12))
+        precio_entry.pack(fill="x", padx=15, pady=(5, 10))
+        
+        # Fecha de Compra
+        ctk.CTkLabel(seccion_producto, text="Fecha de Compra/Factura:", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+
+        fecha_compra_edit_frame = ctk.CTkFrame(seccion_producto, fg_color="transparent")
+        fecha_compra_edit_frame.pack(fill="x", padx=15, pady=(5, 10))
+
+        if CALENDAR_AVAILABLE:
+            fecha_compra_entry = DateEntry(
+                fecha_compra_edit_frame,
+                width=25,
+                background='darkblue',
+                foreground='white',
+                borderwidth=2,
+                date_pattern='yyyy-mm-dd',
+                font=("Arial", 11)
+            )
+            fecha_compra_entry.pack(side="left", fill="x", expand=True)
+            fecha_compra_entry.set_date(fecha_compra_var.get())
+
+            def update_fc_edit(event=None):
+                fecha_compra_var.set(fecha_compra_entry.get())
+            fecha_compra_entry.bind("<<DateEntrySelected>>", update_fc_edit)
+
+            ctk.CTkButton(
+                fecha_compra_edit_frame, text="📅", width=40, height=35,
+                command=lambda: fecha_compra_entry.drop_down(),
+                fg_color=COLORS.get('primary', '#2196F3')
+            ).pack(side="left", padx=(5, 0))
+        else:
+            fecha_compra_entry = ctk.CTkEntry(fecha_compra_edit_frame, textvariable=fecha_compra_var, height=35, font=("Arial", 12))
+            fecha_compra_entry.pack(fill="x")
+
+        # Fecha de Registro
+        ctk.CTkLabel(seccion_producto, text="Fecha de Registro:", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+
+        fecha_registro_edit_frame = ctk.CTkFrame(seccion_producto, fg_color="transparent")
+        fecha_registro_edit_frame.pack(fill="x", padx=15, pady=(5, 15))
+
+        if CALENDAR_AVAILABLE:
+            fecha_registro_entry = DateEntry(
+                fecha_registro_edit_frame,
+                width=25,
+                background='darkblue',
+                foreground='white',
+                borderwidth=2,
+                date_pattern='yyyy-mm-dd',
+                font=("Arial", 11)
+            )
+            fecha_registro_entry.pack(side="left", fill="x", expand=True)
+            fecha_registro_entry.set_date(fecha_registro_var.get())
+
+            def update_fr_edit(event=None):
+                fecha_registro_var.set(fecha_registro_entry.get())
+            fecha_registro_entry.bind("<<DateEntrySelected>>", update_fr_edit)
+
+            ctk.CTkButton(
+                fecha_registro_edit_frame, text="📅", width=40, height=35,
+                command=lambda: fecha_registro_entry.drop_down(),
+                fg_color=COLORS.get('primary', '#2196F3')
+            ).pack(side="left", padx=(5, 0))
+        else:
+            fecha_registro_entry = ctk.CTkEntry(fecha_registro_edit_frame, textvariable=fecha_registro_var, height=35, font=("Arial", 12))
+            fecha_registro_entry.pack(fill="x")
+        
+        # SECCIÓN: Información Fiscal
+        seccion_fiscal = ctk.CTkFrame(main_frame, fg_color=("gray95", "gray20"), corner_radius=10)
+        seccion_fiscal.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            seccion_fiscal,
+            text="🏛️ INFORMACIÓN FISCAL (opcional)",
+            font=("Arial", 14, "bold"),
+            text_color=COLORS['primary']
+        ).pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # Folio
+        ctk.CTkLabel(seccion_fiscal, text="Folio Factura:", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+        folio_entry = ctk.CTkEntry(seccion_fiscal, textvariable=folio_var, height=35, font=("Arial", 12))
+        folio_entry.pack(fill="x", padx=15, pady=(5, 10))
+        
+        # Proveedor
+        ctk.CTkLabel(seccion_fiscal, text="Proveedor:", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+        proveedor_entry = ctk.CTkEntry(seccion_fiscal, textvariable=proveedor_var, height=35, font=("Arial", 12))
+        proveedor_entry.pack(fill="x", padx=15, pady=(5, 10))
+        
+        # RFC
+        ctk.CTkLabel(seccion_fiscal, text="RFC Proveedor:", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+        rfc_entry = ctk.CTkEntry(seccion_fiscal, textvariable=rfc_var, height=35, font=("Arial", 12))
+        rfc_entry.pack(fill="x", padx=15, pady=(5, 15))
+        
+        # SECCIÓN: Impuestos
+        seccion_impuestos = ctk.CTkFrame(main_frame, fg_color=("gray95", "gray20"), corner_radius=10)
+        seccion_impuestos.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            seccion_impuestos,
+            text="💰 IMPUESTOS Y FINANCIAMIENTO",
+            font=("Arial", 14, "bold"),
+            text_color=COLORS['primary']
+        ).pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # Checkbox IVA
+        iva_checkbox = ctk.CTkCheckBox(
+            seccion_impuestos,
+            text="Incluir IVA (16%)",
+            variable=incluir_iva_var,
+            font=("Arial", 11, "bold")
+        )
+        iva_checkbox.pack(anchor="w", padx=15, pady=(5, 10))
+        
+        # IEPS
+        ctk.CTkLabel(seccion_impuestos, text="IEPS ($):", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+        ieps_entry = ctk.CTkEntry(seccion_impuestos, textvariable=ieps_var, height=35, font=("Arial", 12))
+        ieps_entry.pack(fill="x", padx=15, pady=(5, 10))
+        
+        # Tasa interés
+        ctk.CTkLabel(seccion_impuestos, text="Tasa Interés (%):", font=("Arial", 11, "bold"), anchor="w").pack(fill="x", padx=15)
+        interes_entry = ctk.CTkEntry(seccion_impuestos, textvariable=interes_var, height=35, font=("Arial", 12))
+        interes_entry.pack(fill="x", padx=15, pady=(5, 15))
+        
+        # SECCIÓN: Notas
+        seccion_notas = ctk.CTkFrame(main_frame, fg_color=("gray95", "gray20"), corner_radius=10)
+        seccion_notas.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(
+            seccion_notas,
+            text="📝 NOTAS",
+            font=("Arial", 14, "bold"),
+            text_color=COLORS['primary']
+        ).pack(anchor="w", padx=15, pady=(10, 5))
+        
+        notas_text = ctk.CTkTextbox(seccion_notas, height=80, font=("Arial", 11))
+        notas_text.pack(fill="x", padx=15, pady=(5, 15))
+        notas_text.insert("1.0", notas_var.get())
+        
+        # Función para guardar cambios
+        def guardar_cambios():
+            """Guardar los cambios de la compra"""
+            try:
+                from decimal import Decimal
+                
+                # Validar campos obligatorios
+                if not cantidad_var.get() or not precio_var.get():
+                    messagebox.showerror("Error", "Cantidad y precio son obligatorios", parent=ventana_edicion)
+                    return
+                
+                cantidad = Decimal(cantidad_var.get())
+                precio = Decimal(precio_var.get())
+                ieps = Decimal(ieps_var.get() or "0")
+                tasa_interes = Decimal(interes_var.get() or "0")
+                
+                if cantidad <= 0 or precio <= 0:
+                    messagebox.showerror("Error", "Cantidad y precio deben ser mayores que 0", parent=ventana_edicion)
+                    return
+                
+                # Calcular nuevos totales (IVA opcional)
+                subtotal = cantidad * precio
+                iva = subtotal * Decimal("0.16") if incluir_iva_var.get() else Decimal("0.00")
+                total = subtotal + iva + ieps
+                
+                # Obtener notas del textbox
+                notas_texto = notas_text.get("1.0", "end-1c").strip()
+                
+                # Actualizar en BD
+                query = """
+                    UPDATE compra SET
+                        cantidad_compra = %s,
+                        precio_unitario_compra = %s,
+                        fecha_compra = %s,
+                        fecha_registro = %s,
+                        folio_factura = %s,
+                        proveedor = %s,
+                        rfc_proveedor = %s,
+                        importe_ieps = %s,
+                        tasa_interes = %s,
+                        subtotal = %s,
+                        iva = %s,
+                        total_con_impuestos = %s,
+                        notas = %s
+                    WHERE id_compra = %s
+                """
+                
+                valores = (
+                    float(cantidad),
+                    float(precio),
+                    fecha_compra_var.get(),
+                    fecha_registro_var.get(),
+                    folio_var.get().strip() or None,
+                    proveedor_var.get().strip() or None,
+                    rfc_var.get().strip().upper() or None,
+                    float(ieps),
+                    float(tasa_interes),
+                    float(subtotal),
+                    float(iva),
+                    float(total),
+                    notas_texto or None,
+                    compra['id_compra']
+                )
+                
+                self.cursor.execute(query, valores)
+                
+                # Ajustar stock si cambió la cantidad
+                cantidad_original = Decimal(str(compra['cantidad_compra']))
+                if cantidad != cantidad_original:
+                    diferencia = cantidad - cantidad_original
+                    self.cursor.execute(
+                        "UPDATE producto SET stock = stock + %s WHERE id_producto = %s",
+                        (float(diferencia), compra['id_producto'])
+                    )
+                
+                self.conn.commit()
+                
+                messagebox.showinfo(
+                    "Éxito",
+                    "Compra actualizada exitosamente",
+                    parent=ventana_edicion
+                )
+                
+                ventana_edicion.destroy()
+                self.load_compras()
+                
+            except ValueError as e:
+                messagebox.showerror("Error", f"Valores numéricos inválidos:\n{str(e)}", parent=ventana_edicion)
+            except Exception as e:
+                self.conn.rollback()
+                messagebox.showerror("Error", f"Error al actualizar compra:\n{str(e)}", parent=ventana_edicion)
+        
+        # Botones
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Cancelar",
+            command=ventana_edicion.destroy,
+            fg_color="gray",
+            hover_color="darkgray",
+            width=350,
+            height=45,
+            font=("Arial", 13, "bold")
+        ).pack(side="left", expand=True, padx=5)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Guardar Cambios",
+            command=guardar_cambios,
+            fg_color=COLORS['success'],
+            hover_color=COLORS['success_hover'],
+            width=350,
+            height=45,
+            font=("Arial", 13, "bold")
+        ).pack(side="right", expand=True, padx=5)
+    
+    def eliminar_compra(self, compra):
+        """Eliminar una compra"""
+        if not messagebox.askyesno(
+            "Confirmar Eliminación",
+            f"¿Está seguro de eliminar esta compra?\n\n"
+            f"Proveedor: {compra['proveedor']}\n"
+            f"Folio: {compra['folio_factura']}\n"
+            f"Total: ${float(compra['total_con_impuestos']):,.2f}"
+        ):
+            return
+        
+        try:
+            # Obtener datos para ajustar stock
+            self.cursor.execute("""
+                SELECT cantidad_compra, id_producto 
+                FROM compra 
+                WHERE id_compra = %s
+            """, (compra['id_compra'],))
+            compra_data = self.cursor.fetchone()
+            
+            if compra_data:
+                # Eliminar compra
+                self.cursor.execute("DELETE FROM compra WHERE id_compra = %s", (compra['id_compra'],))
+                
+                # Ajustar stock
+                self.cursor.execute("""
+                    UPDATE producto 
+                    SET stock = stock - %s 
+                    WHERE id_producto = %s
+                """, (compra_data['cantidad_compra'], compra_data['id_producto']))
+            
+            self.conn.commit()
+            messagebox.showinfo("Éxito", "Compra eliminada exitosamente")
+            self.load_compras()
+            
+        except Exception as e:
+            self.conn.rollback()
+            messagebox.showerror("Error", f"Error al eliminar compra: {str(e)}")
+    
+    def create_status_bar(self):
+        """Create status bar at bottom"""
+        self.status_frame = ctk.CTkFrame(self.root, fg_color=("gray85", "gray25"), height=30)
+        self.status_frame.pack(fill="x", side="bottom")
+        self.status_frame.pack_propagate(False)
+        
+        self.status_label = ctk.CTkLabel(
+            self.status_frame,
+            text="Sistema Fiscal 2.0 - Listo",
+            font=FONTS['small'],
+            anchor="w"
+        )
+        self.status_label.pack(side="left", padx=10, pady=5)
+    
+    def update_status(self, text):
+        """Update status bar text"""
+        self.status_label.configure(text=text)
+
+    def on_closing(self):
+        """Cerrar aplicación limpiamente"""
+        try:
+            if hasattr(self, 'conn') and self.conn:
+                self.conn.close()
+        except:
+            pass
+        self.root.destroy()
+
+if __name__ == "__main__":
+    root = ctk.CTk()
+    user_data = {
+        'nombre_completo': 'Usuario Prueba',
+        'rol': 'admin'
+    }
+    app = ComprasApp(root, user_data)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    root.mainloop()

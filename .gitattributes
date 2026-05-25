@@ -1,0 +1,24 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python
+*.py text eol=lf
+*.pyw text eol=lf
+
+# SQL
+*.sql text eol=lf
+
+# Markdown
+*.md text eol=lf
+
+# Images
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+
+# PDFs
+*.pdf binary
+
+# Excel
+*.xlsx binary

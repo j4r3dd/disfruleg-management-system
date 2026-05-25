@@ -1,0 +1,363 @@
+# Ubicuo AI - Configuración Principal
+# config/settings.yaml
+
+# ===== INFORMACIÓN DEL SISTEMA =====
+app:
+  name: "Ubicuo AI"
+  version: "1.0.0"
+  description: "Sistema de Automatización de Datos"
+  author: "Ubicuo AI Team"
+  license: "Commercial"
+
+# ===== BASE DE DATOS =====
+database:
+  # Tipo de conexión
+  type: "mysql"  # mysql, postgresql, sqlite
+  
+  # Credenciales (usar variables de entorno en producción)
+  host: "localhost"
+  port: 3306
+  database: "disfruleg_db"
+  user: "root"
+  password: ""
+  
+  # Pool de conexiones
+  pool:
+    size: 10
+    max_overflow: 20
+    timeout: 30
+    recycle: 3600
+  
+  # Opciones
+  options:
+    charset: "utf8mb4"
+    use_unicode: true
+    autocommit: false
+
+# ===== MOTOR DE PARSEO =====
+parser:
+  # Patrones de cantidad (comprehensive - all units)
+  quantity_patterns:
+    # Weight units
+    - r'(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|k|kilo|kilos|kilogramo|kilogramos)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:g|gr|grs|gramos?)'
+
+    # Volume units
+    - r'(\d+(?:[.,]\d+)?)\s*(?:lt|lts|l|litro|litros)'
+
+    # Count units
+    - r'(\d+(?:[.,]\d+)?)\s*(?:pz|pza|pzs|pieza|piezas?|unidad|unidades)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:docena|docenas|dz)'
+
+    # Container units
+    - r'(\d+(?:[.,]\d+)?)\s*(?:mjo|manojo|manojos?|ramo|ramos)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:caja|cajas?|charola|charolas)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:bolsa|bolsas?)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:paq|paqs|paquete|paquetes?)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:bote|botes|frasco|frascos)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:botella|botellas?)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:lata|latas?)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:cubeta|cubetas?)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:rollo|rollos?)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:tableta|tabletas?|barra|barras)'
+    - r'(\d+(?:[.,]\d+)?)\s*(?:burbuja|burbujas?)'
+
+    # Special units
+    - r'(\d+(?:[.,]\d+)?)\s*(?:granel)'
+  
+  # Normalización de unidades (values match database)
+  unit_normalization:
+    # Weight units
+    kg: ["kg", "kgs", "k", "kilo", "kilos", "kilogramo", "kilogramos"]
+    g: ["g", "gr", "grs", "gramo", "gramos"]
+
+    # Volume units
+    lt: ["lt", "lts", "l", "litro", "litros"]
+
+    # Count units
+    pz: ["pz", "pza", "pzs", "pieza", "piezas", "unidad", "unidades"]
+    docena: ["docena", "docenas", "dz"]
+
+    # Container units
+    mjo: ["mjo", "manojo", "manojos", "ramo", "ramos"]
+    caja: ["caja", "cajas", "charola", "charolas"]
+    bolsa: ["bolsa", "bolsas"]
+    paq: ["paq", "paqs", "paquete", "paquetes"]
+    bote: ["bote", "botes", "frasco", "frascos"]
+    botella: ["botella", "botellas"]
+    lata: ["lata", "latas"]
+    cubeta: ["cubeta", "cubetas"]
+    rollo: ["rollo", "rollos"]
+    tableta: ["tableta", "tabletas", "barra", "barras"]
+    burbuja: ["burbuja", "burbujas"]
+
+    # Special units
+    granel: ["granel"]
+  
+  # Opciones
+  options:
+    case_sensitive: false
+    strip_accents: true
+    remove_extra_spaces: true
+    decimal_separator: [",", "."]
+
+# ===== FUZZY MATCHING =====
+matching:
+  # Umbral de confianza (0.0 - 1.0)
+  threshold: 0.75
+  
+  # Algoritmo
+  algorithm: "rapidfuzz"  # levenshtein, fuzzywuzzy, rapidfuzz
+  
+  # Opciones
+  options:
+    strict_mode: false
+    case_sensitive: false
+    partial_match: true
+    token_sort: true
+    token_set: true
+  
+  # Boosting de confianza
+  boost:
+    exact_unit_match: 0.15  # +15% si la unidad coincide
+    category_match: 0.10    # +10% si la categoría coincide
+    recent_use: 0.05        # +5% si se usó recientemente
+
+# ===== SISTEMA DE APRENDIZAJE =====
+learning:
+  # Archivo de diccionario
+  dictionary_file: "learning_dict.json"
+  
+  # Auto-guardar
+  auto_save: true
+  save_interval: 300  # segundos
+  
+  # Backup
+  backup:
+    enabled: true
+    interval: 86400  # 24 horas
+    max_backups: 7
+    path: "backups/learning_dict"
+  
+  # Limpieza automática
+  cleanup:
+    enabled: true
+    remove_old_entries: true
+    max_age_days: 180  # 6 meses
+    min_usage_count: 1
+
+# ===== DETECCIÓN DE SESIONES =====
+sessions:
+  enabled: true
+  
+  # Keywords por sesión
+  keywords:
+    comida_personal:
+      - "comida personal"
+      - "personal"
+      - "empleado"
+      - "empleados"
+    
+    cocina:
+      - "cocina"
+      - "chef"
+      - "cocinero"
+      - "preparación"
+    
+    barra:
+      - "barra"
+      - "bar"
+      - "bebida"
+      - "bebidas"
+      - "mixología"
+    
+    piso:
+      - "piso"
+      - "servicio"
+      - "mesero"
+      - "meseros"
+      - "salón"
+    
+    limpieza:
+      - "limpieza"
+      - "aseo"
+      - "sanitización"
+      - "productos de limpieza"
+  
+  # Sesión por defecto
+  default_session: "general"
+
+# ===== INTERFAZ DE USUARIO =====
+ui:
+  # Tema
+  theme:
+    mode: "dark"  # light, dark, system
+    color_theme: "blue"  # blue, green, dark-blue
+    
+  # Colores personalizados
+  colors:
+    success: "#27AE60"
+    warning: "#F39C12"
+    error: "#E74C3C"
+    info: "#3498DB"
+    primary: "#2D9B6C"
+  
+  # Ventana principal
+  window:
+    width: 1200
+    height: 800
+    min_width: 1000
+    min_height: 600
+    resizable: true
+    center_on_screen: true
+  
+  # Tabla de resultados
+  table:
+    row_height: 35
+    font_size: 11
+    show_grid: true
+    alternate_row_colors: true
+  
+  # Animaciones
+  animations:
+    enabled: true
+    duration: 200  # ms
+    easing: "ease_in_out"
+
+# ===== LOGGING =====
+logging:
+  # Nivel de log
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  
+  # Formato
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+  
+  # Archivos de log
+  files:
+    app_log:
+      path: "logs/app.log"
+      rotation: "10 MB"
+      retention: "30 days"
+      compression: "zip"
+    
+    error_log:
+      path: "logs/errors.log"
+      rotation: "5 MB"
+      retention: "60 days"
+      compression: "zip"
+      level: "ERROR"
+  
+  # Console
+  console:
+    enabled: true
+    colorize: true
+
+# ===== CACHÉ =====
+cache:
+  enabled: true
+  
+  # Productos
+  products:
+    ttl: 3600  # 1 hora
+    max_size: 1000
+  
+  # Precios
+  prices:
+    ttl: 1800  # 30 minutos
+    max_size: 500
+  
+  # Queries
+  queries:
+    ttl: 600  # 10 minutos
+    max_size: 100
+
+# ===== VALIDACIONES =====
+validation:
+  # Cantidad
+  quantity:
+    min: 0.001
+    max: 10000
+    decimal_places: 3
+  
+  # Precio
+  price:
+    min: 0.01
+    max: 1000000
+    decimal_places: 2
+  
+  # Texto
+  text:
+    max_length: 500
+    min_length: 1
+    allowed_chars: "alphanumeric + special"
+
+# ===== PERFORMANCE =====
+performance:
+  # Procesamiento
+  max_concurrent_requests: 10
+  request_timeout: 30
+  
+  # Batch processing
+  batch:
+    enabled: true
+    size: 50
+    timeout: 60
+  
+  # Memory
+  memory:
+    max_usage_mb: 512
+    gc_interval: 300  # segundos
+
+# ===== SEGURIDAD =====
+security:
+  # Encriptación
+  encryption:
+    enabled: false  # Activar en producción
+    algorithm: "AES-256"
+  
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    max_requests: 100
+    time_window: 60  # segundos
+  
+  # Auditoría
+  audit:
+    enabled: true
+    log_all_actions: true
+    log_path: "logs/audit.log"
+
+# ===== INTEGRACIÓN =====
+integration:
+  # API endpoints (si aplica)
+  api:
+    enabled: false
+    host: "0.0.0.0"
+    port: 8000
+    ssl: false
+  
+  # Webhooks
+  webhooks:
+    enabled: false
+    endpoints: []
+  
+  # Export
+  export:
+    formats: ["json", "csv", "xlsx"]
+    auto_export: false
+    path: "exports/"
+
+# ===== DESARROLLO =====
+development:
+  debug: false
+  hot_reload: false
+  profiling: false
+  mock_data: false
+
+# ===== FEATURES FLAGS =====
+features:
+  ocr: false  # Future: OCR de imágenes
+  ml_advanced: false  # Future: ML avanzado
+  multi_language: false  # Future: Multi-idioma
+  offline_mode: false  # Future: Modo offline
+  analytics_dashboard: false  # Future: Dashboard

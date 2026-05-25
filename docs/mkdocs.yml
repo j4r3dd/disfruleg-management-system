@@ -1,0 +1,75 @@
+site_name: CHUMI - Documentación
+theme:
+  name: material
+  palette:
+    - scheme: light
+      primary: orange
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Modo oscuro
+    - scheme: dark
+      primary: orange
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Modo claro
+  features:
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.copy
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - toc.integrate
+
+plugins:
+  - search
+  - minify
+
+markdown_extensions:
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      use_pygments: true
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+  - md_in_html
+
+docs_dir: 'source'
+
+nav:
+  - Inicio: index.md
+  - Introducción:
+    - Overview: introduccion/overview.md
+    - Arquitectura: introduccion/arquitectura.md
+    - Requisitos: introduccion/requisitos.md
+  - Módulos:
+    - Usuarios: modulos/usuarios/index.md
+    - UbicuoAI: modulos/ubicuoai/index.md
+    - Clientes: modulos/clientes/index.md
+    - Precios: modulos/precios/index.md
+    - Inventario: modulos/inventario/index.md
+    - Reportes: modulos/reportes/index.md
+    - Deudas: modulos/deudas/index.md
+    - Dispositivos: modulos/dispositivos/index.md
+    - Cotizaciones: modulos/cotizaciones/index.md
+    - Recibos: modulos/recibos/index.md
+  - Guías:
+    - Primeros Pasos: guias/primeros-pasos.md
+    - Instalación: guias/instalacion.md
+    - Configuración: guias/configuracion.md
+    - Flujos: guias/flujos.md
+    - Integración: guias/integracion.md
+    - Respaldos: guias/respaldos.md
+    - Seguridad: guias/seguridad.md
+    - Troubleshooting: guias/troubleshooting.md
+  - FAQ:
+    - General: faq/general.md
+    - Módulos: faq/modulos.md
+    - Técnico: faq/tecnico.md
+    - Soporte: faq/soporte.md
