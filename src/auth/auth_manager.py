@@ -90,8 +90,9 @@ class AuthManager:
                     WHERE username = %s
                 """, (username,))
 
+                # El pool usa DictCursor, así que el resultado se accede por nombre
                 result = cursor.fetchone()
-                if result and result[0] >= self.max_intentos:
+                if result and result['intentos_fallidos'] >= self.max_intentos:
                     # Bloquear usuario
                     bloqueo_hasta = datetime.now() + timedelta(minutes=self.bloqueo_minutos)
                     cursor.execute("""

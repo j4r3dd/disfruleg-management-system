@@ -10,9 +10,9 @@ Built in Python with a CustomTkinter desktop UI, MySQL / Google Cloud SQL as the
 
 ## Highlights
 
-- **9 business modules**, each implemented as a self-contained vertical slice (`domain → data → business → ui`).
+- **11 business modules**, each implemented as a self-contained vertical slice (`domain → data → business → ui`).
 - **Clean Architecture**: inner layers never depend on outer layers; dependencies are injected through `Protocol`-based interfaces.
-- **Authentication & authorization** with `bcrypt` hashing, role-based access (admin / user), session timeout, and failed-login lockout.
+- **Authentication & authorization** with `bcrypt` hashing, role-based access (admin / supervisor / user), 30-minute session timeout, and failed-login lockout.
 - **Device authorization** layer — only registered devices can connect to production data.
 - **PDF + Excel report generation** (ReportLab, FPDF, openpyxl) for receipts, sales dashboards, client rankings and product contribution.
 - **UbicuoAI assistant** — natural-language queries over the operational database with unit validation across 18 measurement units and fuzzy matching.
@@ -78,12 +78,13 @@ domain/      ← Entities, value objects, protocols
 │   ├── utils/               # Helpers
 │   └── modules/             # Business modules (one folder per slice)
 ├── data/
-│   ├── sql/                 # Schema, triggers, views
+│   ├── sql/                 # Schema, triggers, views, sample data
 │   └── fonts/               # Custom fonts for PDFs
 ├── docs/                    # Documentation site (mkdocs)
-├── scripts/                 # One-off maintenance & migration scripts
+├── scripts/
+│   ├── setup_local_db.py    # One-command database bootstrap
 │   └── db_admin/            # Database admin utilities
-└── installer/               # PyInstaller / installer assets
+└── assets/                  # Icons and images
 ```
 
 ## Getting started
@@ -113,23 +114,37 @@ cp .env.example .env
 # then edit .env with your DB credentials
 ```
 
-If you use Cloud SQL, drop a service-account JSON in the project root (it is git-ignored) and set `GOOGLE_APPLICATION_CREDENTIALS` accordingly.
+Set `DB_MODE=local` to run against a local MySQL server, or `DB_MODE=cloud` to
+use a Google Cloud SQL instance. For Cloud SQL, drop a service-account JSON
+(`credentials.json`, git-ignored) in the project root, or authenticate with
+`gcloud auth application-default login`.
 
 ### 4. Initialise the database
 
-```bash
-# create the schema
-mysql -u <user> -p disfruleg < data/sql/schema.sql
+One command creates the database, applies the full schema (tables, views,
+triggers), loads sample data, creates an admin user, and authorises the current
+machine:
 
-# seed an initial admin user (interactive — no hardcoded passwords)
-python scripts/install_auth.py
+```bash
+python scripts/setup_local_db.py --reset
 ```
+
+It prompts for the MySQL password and for the app admin password — nothing is
+hardcoded. Useful flags:
+
+| Flag | Effect |
+|------|--------|
+| `--reset` | Drop and recreate the database from scratch |
+| `--admin-user <name>` | Admin username to create (default: `admin`) |
+| `--skip-device` | Skip auto-authorising this machine, to exercise the real device-approval flow |
 
 ### 5. Run
 
 ```bash
 python main.py
 ```
+
+Log in with the admin user created in step 4.
 
 ## Screenshots
 
@@ -171,9 +186,9 @@ Construido con **CustomTkinter** para la interfaz y **MySQL / Google Cloud SQL**
 
 ### Características principales
 
-- **9 módulos de negocio**, cada uno como vertical slice independiente (`domain → data → business → ui`).
+- **11 módulos de negocio**, cada uno como vertical slice independiente (`domain → data → business → ui`).
 - **Arquitectura Limpia**: las capas internas nunca dependen de las externas. Las dependencias se inyectan vía interfaces (`Protocol`).
-- **Autenticación y autorización** con `bcrypt`, control de roles (admin / usuario), expiración de sesión y bloqueo por intentos fallidos.
+- **Autenticación y autorización** con `bcrypt`, control de roles (admin / supervisor / usuario), expiración de sesión a 30 minutos y bloqueo por intentos fallidos.
 - **Autorización por dispositivo** — solo equipos registrados pueden acceder a datos productivos.
 - **Reportes PDF y Excel** (ReportLab, FPDF, openpyxl) para recibos, dashboards de ventas y rankings de clientes/productos.
 - **Asistente UbicuoAI** — consultas en lenguaje natural con validación de unidades (18 unidades) y fuzzy matching.
@@ -189,13 +204,19 @@ python -m venv .venv
 source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env         # editar con tus credenciales
+cp .env.example .env         # editar con tus credenciales (DB_MODE=local)
 
-mysql -u <usuario> -p disfruleg < data/sql/schema.sql
-python scripts/install_auth.py   # crea un admin inicial (interactivo)
+# Crea la base, aplica el esquema completo (tablas, vistas, triggers),
+# carga datos de ejemplo, crea el usuario admin y autoriza este equipo.
+# Pide las contraseñas de forma interactiva.
+python scripts/setup_local_db.py --reset
 
 python main.py
 ```
+
+Para conectar a Google Cloud SQL en lugar de MySQL local, usa `DB_MODE=cloud`
+en el `.env` y coloca un `credentials.json` (service account) en la raíz del
+proyecto.
 
 ### Estructura del proyecto
 

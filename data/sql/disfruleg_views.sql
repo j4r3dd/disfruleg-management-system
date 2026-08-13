@@ -120,13 +120,13 @@ SELECT
     SUM(df.cantidad_factura * df.precio_unitario_venta) AS total_ventas,
     COUNT(DISTINCT f.id_factura) AS cantidad_facturas,
     MAX(f.fecha_factura) AS ultima_compra,
-    SUM(CASE WHEN d.pagado = FALSE THEN d.monto_total - d.monto_pagado ELSE 0 END) AS saldo_pendiente
+    SUM(CASE WHEN d.pagado = FALSE THEN d.monto - d.monto_pagado ELSE 0 END) AS saldo_pendiente
 FROM cliente c
 JOIN factura f ON c.id_cliente = f.id_cliente
 JOIN detalle_factura df ON f.id_factura = df.id_factura
 JOIN grupo g ON c.id_grupo = g.id_grupo
 JOIN tipo_cliente tc ON g.id_tipo_cliente = tc.id_tipo_cliente
-LEFT JOIN deudas d ON f.id_factura = d.id_factura
+LEFT JOIN deuda d ON f.id_factura = d.id_factura
 GROUP BY c.id_cliente, c.nombre_cliente, g.clave_grupo, tc.nombre_tipo, tc.descuento;
 
 -- Vista para órdenes pendientes

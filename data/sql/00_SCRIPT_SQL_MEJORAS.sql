@@ -134,7 +134,7 @@ SELECT
     d.id_cliente,
     d.id_factura,
     c.nombre_cliente,
-    d.nombre_grupo,
+    g.clave_grupo AS nombre_grupo,
     d.monto AS monto_total,
     d.monto_pagado,
     (d.monto - d.monto_pagado) AS saldo_pendiente,
@@ -148,12 +148,13 @@ SELECT
     COUNT(DISTINCT cc.id_credito) AS cantidad_creditos
 FROM deuda d
 JOIN cliente c ON d.id_cliente = c.id_cliente
-LEFT JOIN pago_registrado pr ON d.id_deuda = pr.id_deuda 
+JOIN grupo g ON c.id_grupo = g.id_grupo
+LEFT JOIN pago_registrado pr ON d.id_deuda = pr.id_deuda
     AND pr.estado_pago = 'PROCESSED'
-LEFT JOIN credito_cliente cc ON d.id_cliente = cc.id_cliente 
+LEFT JOIN credito_cliente cc ON d.id_cliente = cc.id_cliente
     AND cc.estado IN ('ACTIVO', 'PARCIALMENTE_USADO')
-GROUP BY d.id_deuda, d.id_cliente, d.id_factura, c.nombre_cliente, 
-         d.nombre_grupo, d.monto, d.monto_pagado, d.fecha_generada, 
+GROUP BY d.id_deuda, d.id_cliente, d.id_factura, c.nombre_cliente,
+         g.clave_grupo, d.monto, d.monto_pagado, d.fecha_generada,
          d.pagado, d.fecha_pago, d.descripcion;
 
 -- ========== PROCEDIMIENTO: calcular_monto_pagado_verificado ==========

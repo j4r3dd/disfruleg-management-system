@@ -3,10 +3,22 @@ USE disfruleg;
 -- ============================================================
 -- MODIFICACIÓN DE TABLA: Agregar campo fecha_registro a compra
 -- ============================================================
--- Ejecutar primero si la columna no existe
-ALTER TABLE compra 
-ADD COLUMN IF NOT EXISTS fecha_registro DATE NOT NULL DEFAULT (CURRENT_DATE)
-COMMENT 'Fecha en que se registró la compra en el sistema';
+-- Ejecutar primero si la columna no existe.
+-- Nota: MySQL no soporta ADD COLUMN IF NOT EXISTS (eso es MariaDB), así que
+-- se verifica contra information_schema antes de alterar la tabla.
+SET @col_existe = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'compra'
+      AND COLUMN_NAME = 'fecha_registro'
+);
+SET @ddl = IF(@col_existe = 0,
+    "ALTER TABLE compra ADD COLUMN fecha_registro DATE NOT NULL DEFAULT (CURRENT_DATE) COMMENT 'Fecha en que se registró la compra en el sistema'",
+    'SELECT 1'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- ============================================================
 -- TRIGGERS DEL SISTEMA

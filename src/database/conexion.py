@@ -1,4 +1,4 @@
-from .cloud_config import connector, CLOUD_SQL_CONNECTION_NAME, DB_USER, DB_PASSWORD, DB_NAME
+from .cloud_config import create_connection, DB_USER, DB_PASSWORD, DB_NAME
 import pymysql.cursors
 import logging
 from pathlib import Path
@@ -84,15 +84,7 @@ class ConnectionPool:
     def _create_new_connection(self):
         """Create a new database connection"""
         try:
-            conn = connector.connect(
-                CLOUD_SQL_CONNECTION_NAME,
-                "pymysql",
-                user=DB_USER,
-                password=DB_PASSWORD,
-                db=DB_NAME,
-                cursorclass=pymysql.cursors.DictCursor
-            )
-            return conn
+            return create_connection()
         except Exception as e:
             logger.error(f"❌ Failed to create connection: {e}")
             return None
@@ -143,6 +135,15 @@ class ConnectionPool:
         try:
             # Verify connection is still alive before returning to pool
             if self._is_connection_alive(conn):
+                # Cerrar la transacción abierta antes de reciclar la conexión.
+                # InnoDB usa REPEATABLE READ: sin esto la conexión conserva el
+                # snapshot de su primera lectura y el siguiente uso vería datos
+                # obsoletos (p. ej. un bloqueo de usuario ya levantado).
+                try:
+                    conn.rollback()
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo hacer rollback al devolver la conexión: {e}")
+
                 self.pool.put_nowait(conn)
                 logger.debug(f"✓ Connection returned to pool (available: {self.pool.qsize()})")
             else:

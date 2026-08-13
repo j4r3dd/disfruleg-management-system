@@ -3,6 +3,17 @@
 -- Date: 2025-11-25
 -- Purpose: Fix device authorization issues by adding estado, fecha_eliminacion, razon_bloqueo
 -- ============================================================================
+--
+-- OBSOLETO - NO EJECUTAR. Se conserva solo como referencia histórica.
+--
+-- Este script nunca se aplicó correctamente en MySQL: usa
+-- `ADD COLUMN IF NOT EXISTS` y `ADD INDEX IF NOT EXISTS`, que son
+-- sintaxis de MariaDB y MySQL rechaza con error 1064. Además le falta
+-- el estado 'EXPIRADO' que usa src/services/device_recycle_service.py.
+--
+-- La definición vigente y correcta está en device_security_schema.sql,
+-- que crea la tabla completa desde cero.
+-- ============================================================================
 
 USE disfruleg;
 
